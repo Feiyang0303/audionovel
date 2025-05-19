@@ -1,8 +1,14 @@
 from dotenv import load_dotenv
 load_dotenv()
 from flask import Flask, request, jsonify, send_from_directory
-from utils import simplify_text, generate_audiobook
+from utils import (
+    simplify_text, 
+    generate_audiobook, 
+    save_uploaded_file,
+    convert_to_pdf
+)
 import os
+from pathlib import Path
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
@@ -10,12 +16,11 @@ app = Flask(__name__)
 # Configuration
 UPLOAD_FOLDER = 'uploads'
 AUDIO_FOLDER = 'audio_output'
-ALLOWED_EXTENSIONS = {'pdf', 'txt'}
+ALLOWED_EXTENSIONS = {'pdf', 'txt', 'epub', 'mobi'}
 
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
-if not os.path.exists(AUDIO_FOLDER):
-    os.makedirs(AUDIO_FOLDER)
+# Ensure folders exist
+Path(UPLOAD_FOLDER).mkdir(exist_ok=True)
+Path(AUDIO_FOLDER).mkdir(exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['AUDIO_FOLDER'] = AUDIO_FOLDER
@@ -40,6 +45,7 @@ def simplify():
 
 @app.route('/upload', methods=['POST'])
 def upload_book():
+    """Handle file upload and convert to PDF if needed"""
     if 'file' not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
 
@@ -47,17 +53,24 @@ def upload_book():
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
 
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(file_path)
-        
+    if not allowed_file(file.filename):
+        return jsonify({"error": f"Invalid file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
+
+    try:
+        result = save_uploaded_file(file)
         return jsonify({
-            "message": "File uploaded successfully", 
-            "file_path": file_path
+            "status": "success",
+            "message": "File uploaded and converted to PDF successfully",
+            "file_path": result['file_path'],
+            "filename": result['filename']
         })
-    else:
-        return jsonify({"error": "Invalid file type"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/files/<path:filename>')
+def get_file(filename):
+    """Serve uploaded PDF files"""
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 @app.route('/generate-audiobook', methods=['POST'])
 def create_audiobook():

@@ -1,7 +1,19 @@
 from openai import OpenAI
 import os
-import requests
+import tempfile
+import time
 from pathlib import Path
+from dotenv import load_dotenv
+from werkzeug.utils import secure_filename
+import ebooklib
+from ebooklib import epub
+from PyPDF2 import PdfReader, PdfWriter
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+import mobi
+import requests
+
+load_dotenv()
 
 openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY')) 
 
@@ -10,11 +22,83 @@ def get_deepseek_client():
         api_key=os.getenv('DEEPSEEK_API_KEY'),
         base_url="https://api.deepseek.com/v1",
         default_headers = {
-        "User-Agent": "ChildrensAudiobook/1.0",
-        "Accept-Encoding": "gzip, deflate"
+            "User-Agent": "ChildrensAudiobook/1.0",
+            "Accept-Encoding": "gzip, deflate"
         }
     )
     return client
+def convert_to_pdf(file_path):
+    file_path = Path(file_path)
+    file_ext = file_path.suffix.lower()
+    output_path = file_path.with_suffix('.pdf')
+
+    if file_ext == '.pdf':
+        return str(file_path)
+
+    text = ""
+
+    if file_ext == '.txt':
+        text = file_path.read_text(encoding='utf-8')
+
+    elif file_ext == '.epub':
+        book = epub.read_epub(str(file_path))
+        text = '\n'.join([item.get_content().decode('utf-8') 
+                          for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT)])
+
+    elif file_ext == '.mobi':
+        tempdir, filepath = mobi.extract(str(file_path))
+        text = Path(filepath).read_text(encoding='utf-8')
+        mobi.cleanup(tempdir)
+    
+    else:
+        raise ValueError(f"Unsupported file format: {file_ext}")
+
+    # Write to PDF 
+    c = canvas.Canvas(str(output_path), pagesize=letter)
+    width, height = letter
+    y = height - 40 
+
+    for line in text.split('\n'):
+        if y < 40:
+            c.showPage()
+            y = height - 40
+        c.drawString(40, y, line.strip())
+        y -= 14
+
+    c.save()
+
+    return str(output_path)
+
+def save_uploaded_file(file):
+    """Save uploaded file and convert to PDF if needed"""
+    upload_dir = Path('uploads')
+    upload_dir.mkdir(exist_ok=True)
+    
+    # Handle Unicode filenames
+    filename = secure_filename(file.filename)
+    if not filename:  # If secure_filename returns empty
+        filename = f"upload_{int(time.time())}{Path(file.filename).suffix}"
+    
+    # Save original file
+    original_path = upload_dir / filename
+    file.save(original_path)
+    
+    # Convert to PDF if needed
+    pdf_path = original_path
+    if Path(original_path).suffix.lower() != '.pdf':
+        try:
+            pdf_path = convert_to_pdf(original_path)
+            # Remove original file if conversion was successful
+            original_path.unlink()
+        except Exception as e:
+            # If conversion fails, keep original file and raise error
+            raise Exception(f"Failed to convert file to PDF: {str(e)}")
+    
+    return {
+        'file_path': str(pdf_path),
+        'filename': Path(pdf_path).name,
+        'is_pdf': True
+    }
 
 def simplify_text(text, max_retries=3):
     for attempt in range(max_retries):
