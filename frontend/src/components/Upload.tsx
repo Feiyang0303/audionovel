@@ -54,25 +54,27 @@ export function Upload() {
   }
 
   return (
-    <div className="max-w-xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+    <div className="max-w-3xl mx-auto pt-32 px-4 sm:px-6 lg:px-8">
       <div className="bg-white shadow sm:rounded-lg">
-        <div className="px-4 py-5 sm:p-6">
-          <h3 className="text-lg font-medium leading-6 text-gray-900">Upload Your Book</h3>
-          <div className="mt-2 max-w-xl text-sm text-gray-500">
+        <div className="px-6 py-8 sm:p-8">
+          <h3 className="text-2xl font-medium leading-6 text-gray-900 mb-4">
+            Upload Your Book
+          </h3>
+          <div className="mt-4 max-w-2xl text-lg text-gray-500">
             <p>Upload your children's book in PDF, TXT, EPUB, or MOBI format.</p>
           </div>
           
-          <div className="mt-5">
+          <div className="mt-8">
             <div className="flex items-center justify-center w-full">
-              <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100">
-                <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                  <svg className="w-8 h-8 mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100">
+                <div className="flex flex-col items-center justify-center pt-6 pb-8">
+                  <svg className="w-12 h-12 mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                   </svg>
-                  <p className="mb-2 text-sm text-gray-500">
+                  <p className="mb-2 text-base text-gray-500">
                     <span className="font-semibold">Click to upload</span> or drag and drop
                   </p>
-                  <p className="text-xs text-gray-500">PDF, TXT, EPUB, or MOBI</p>
+                  <p className="text-sm text-gray-500">PDF, TXT, EPUB, or MOBI</p>
                 </div>
                 <input
                   type="file"
@@ -85,33 +87,33 @@ export function Upload() {
             </div>
 
             {file && (
-              <div className="mt-4 text-sm text-gray-600">
+              <div className="mt-6 text-base text-gray-600">
                 Selected file: {file.name}
               </div>
             )}
 
             {error && (
-              <div className="mt-4 text-sm text-red-600">
+              <div className="mt-6 text-base text-red-600">
                 {error}
               </div>
             )}
 
             {isUploading && (
-              <div className="mt-4">
+              <div className="mt-6">
                 <div className="relative pt-1">
-                  <div className="flex mb-2 items-center justify-between">
+                  <div className="flex mb-3 items-center justify-between">
                     <div>
-                      <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-indigo-600 bg-indigo-200">
+                      <span className="text-sm font-semibold inline-block py-1 px-3 uppercase rounded-full text-indigo-600 bg-indigo-200">
                         Uploading
                       </span>
                     </div>
                     <div className="text-right">
-                      <span className="text-xs font-semibold inline-block text-indigo-600">
+                      <span className="text-sm font-semibold inline-block text-indigo-600">
                         {uploadProgress}%
                       </span>
                     </div>
                   </div>
-                  <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-indigo-200">
+                  <div className="overflow-hidden h-3 mb-4 text-xs flex rounded bg-indigo-200">
                     <div
                       style={{ width: `${uploadProgress}%` }}
                       className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-indigo-500 transition-all duration-500"
@@ -121,12 +123,12 @@ export function Upload() {
               </div>
             )}
 
-            <div className="mt-5">
+            <div className="mt-8">
               <button
                 type="button"
                 onClick={handleUpload}
                 disabled={!file || isUploading}
-                className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white 
+                className={`inline-flex items-center px-6 py-3 text-base font-medium rounded-md shadow-sm text-white 
                   ${!file || isUploading 
                     ? 'bg-indigo-300 cursor-not-allowed' 
                     : 'bg-indigo-600 hover:bg-indigo-700'}`}
