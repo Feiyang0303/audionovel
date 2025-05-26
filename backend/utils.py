@@ -7,11 +7,11 @@ from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 import ebooklib
 from ebooklib import epub
-from PyPDF2 import PdfReader, PdfWriter
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
-import mobi
-import requests
+# from PyPDF2 import PdfReader, PdfWriter
+#rom reportlab.lib.pagesizes import letter
+#from reportlab.pdfgen import canvas
+#import mobi
+#import requests
 
 load_dotenv()
 
@@ -19,12 +19,8 @@ openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
 def get_deepseek_client():
     client = OpenAI(
-        api_key=os.getenv('DEEPSEEK_API_KEY'),
-        base_url="https://api.deepseek.com/v1",
-        default_headers = {
-            "User-Agent": "ChildrensAudiobook/1.0",
-            "Accept-Encoding": "gzip, deflate"
-        }
+        api_key=os.getenv("QWEN_API_KEY"), # To obtain an API key, see https://www.alibabacloud.com/help/en/model-studio/developer-reference/get-api-key
+        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     )
     return client
 def convert_to_pdf(file_path):
@@ -101,15 +97,28 @@ def save_uploaded_file(file):
     }
 
 def simplify_text(text, max_retries=3):
+    # Simplify the text for children aged 5-10. Keep characters and main plot points. 
+    # This function uses Qwen-Plus model from Alibaba Cloud.   
     for attempt in range(max_retries):
         try:
             client = get_deepseek_client()
             response = client.chat.completions.create(
-                model="deepseek-chat",
+                model="qwen-plus",
                 messages=[
                     {
                         "role": "system",
-                        "content": "Simplify this story for children aged 5-10. Keep characters and main plot points."
+                        "content": 
+                        """
+                        You are given a story. 
+                        Your task is to generate a script for an audiobook, keeping characters and plot points
+                        intact. Do not change the story. The story you 
+                        return to me should consist of solely characters and dialogue. A narrator character should be present to
+                        tell the story and facilitate the dialogue, as well as provide context and background information. The response
+                        you return should be in the following format: $CHARACTER: $DIALOGUE, where each $CHARACTER is the name of the character,
+                        and $DIALOGUE is the dialogue of the character. Make sure that each block of dialogue is on one line. Each character's 
+                        dialogue should be on a new line. Treat the narrator's dialogue as a separate character. Make sure that the response is 
+                        in the same language as the story you are given.
+                        """
                     },
                     {
                         "role": "user",
