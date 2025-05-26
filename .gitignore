@@ -1,11 +1,13 @@
 # Python
 venv/
-.env
 *.env
+.env
 .env.local
 .env.development
 .env.production
 .env.test
+backend/.env
+frontend/.env
 secrets.json
 config.json
 credentials.json
