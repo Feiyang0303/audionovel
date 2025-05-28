@@ -1,95 +1,91 @@
-from dotenv import load_dotenv
-load_dotenv()
 from flask import Flask, request, jsonify, send_from_directory
-from utils import (
-    simplify_text, 
-    generate_audiobook, 
-    save_uploaded_file,
-    get_deepseek_client
-)
+from flask_cors import CORS
 import os
 from pathlib import Path
+from services.text_processor import TextProcessor
+from utils import save_uploaded_file, extract_text_from_pdf
 from werkzeug.utils import secure_filename
-import PyPDF2
 
 app = Flask(__name__)
+CORS(app)
+
+# Initialize the text processor
+text_processor = TextProcessor()
 
 # Configuration
-UPLOAD_FOLDER = 'uploads'
-AUDIO_FOLDER = 'audio_output'
-ALLOWED_EXTENSIONS = {'pdf', 'txt', 'epub', 'mobi'}
+UPLOAD_FOLDER = Path("uploads")
+AUDIO_OUTPUT_FOLDER = Path("audio_output")
+ALLOWED_EXTENSIONS = {'pdf', 'txt'}
 
 # Ensure folders exist
-Path(UPLOAD_FOLDER).mkdir(exist_ok=True)
-Path(AUDIO_FOLDER).mkdir(exist_ok=True)
+UPLOAD_FOLDER.mkdir(exist_ok=True)
+AUDIO_OUTPUT_FOLDER.mkdir(exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['AUDIO_FOLDER'] = AUDIO_FOLDER
+app.config['AUDIO_FOLDER'] = AUDIO_OUTPUT_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB limit
-
-
-    
 
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@app.route('/generate-story', methods=['POST'])
-def generate_story():
-    data = request.files['file']
-    if not data:
-        return jsonify({"error": "No file uploaded"}), 400
-    
-    if not allowed_file(data.filename):
-        return jsonify({"error": f"Invalid file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
-    
-    print(data)
-    result = save_uploaded_file(data)
-    pdf_path = result['file_path']
-    with open(pdf_path, 'rb') as pdf_file:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text()
-    simplified_story = simplify_text(text)
-    print(simplified_story)
-    
-    return jsonify({"message": "Story generated successfully"}), 200
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({"status": "healthy", "message": "Service is running"})
 
+@app.route('/process', methods=['POST'])
+def process_text():
+    try:
+        data = request.get_json()
+        if not data or 'text' not in data:
+            return jsonify({"error": "No text provided"}), 400
 
-@app.route('/simplify', methods=['POST'])
-def simplify():
-    data = request.files['file']
-    if not data:
-        return jsonify({"error": "No file uploaded"}), 400
-    
-    if not allowed_file(data.filename):
-        return jsonify({"error": f"Invalid file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
-    
-    simplified_story = simplify_text(data["text"])
-    return jsonify({"simplified_story": simplified_story})
+        text = data['text']
+        target_age_group = data.get('target_age_group', '8-12')
+
+        # Process the text through all expert roles using Qwen
+        result = text_processor.process_text(text, target_age_group)
+        
+        if result["status"] == "error":
+            return jsonify(result), 500
+
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/upload', methods=['POST'])
-def upload_book():
-    """Handle file upload and convert to PDF if needed"""
-    if 'file' not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
-
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-
-    if not allowed_file(file.filename):
-        return jsonify({"error": f"Invalid file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
-
+def upload_file():
     try:
-        result = save_uploaded_file(file)
-        return jsonify({
-            "status": "success",
-            "message": "File uploaded and converted to PDF successfully",
-            "file_path": result['file_path'],
-            "filename": result['filename']
-        })
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "No file selected"}), 400
+
+        if not allowed_file(file.filename):
+            return jsonify({"error": f"Invalid file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
+
+        # Save the uploaded file
+        file_path = save_uploaded_file(file, UPLOAD_FOLDER)
+        
+        # Extract text based on file type
+        if file_path.suffix.lower() == '.pdf':
+            text = extract_text_from_pdf(file_path)
+        else:
+            # For text files, read directly
+            text = file_path.read_text()
+
+        # Process the extracted text using Qwen
+        target_age_group = request.form.get('target_age_group', '8-12')
+        result = text_processor.process_text(text, target_age_group)
+
+        if result["status"] == "error":
+            return jsonify(result), 500
+
+        return jsonify(result)
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -97,58 +93,5 @@ def upload_book():
 def get_audio(filename):
     return send_from_directory(app.config['AUDIO_FOLDER'], filename)
 
-@app.route('/simplify-pdf', methods=['POST'])
-def simplify_pdf():
-    """Handle PDF simplification using DeepSeek API"""
-    if 'file' not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
-
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-
-    if not allowed_file(file.filename):
-        return jsonify({"error": f"Invalid file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
-
-    try:
-        # Save the uploaded file
-        result = save_uploaded_file(file)
-        pdf_path = result['file_path']
-
-        # Read PDF content
-        with open(pdf_path, 'rb') as pdf_file:
-            pdf_reader = PyPDF2.PdfReader(pdf_file)
-            text = ""
-            for page in pdf_reader.pages:
-                text += page.extract_text()
-
-        # Get DeepSeek client and make API request
-        client = get_deepseek_client()
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Given this PDF of a story, simplify the story"
-                },
-                {
-                    "role": "user",
-                    "content": text
-                }
-            ],
-            temperature=0.7,
-            max_tokens=2000
-        )
-
-        simplified_text = response.choices[0].message.content
-
-        return jsonify({
-            "status": "success",
-            "simplified_text": simplified_text
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
 if __name__ == '__main__':
-    app.run(port=5001, debug=True)  
+    app.run(host='127.0.0.1', port=5001, debug=True)  
