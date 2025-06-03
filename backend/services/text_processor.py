@@ -1,10 +1,24 @@
 from typing import Dict, List, Optional
+import openai
 import os
 from pathlib import Path
 import json
 import ollama
 from tqdm import tqdm
+from dotenv import load_dotenv
 
+load_dotenv()
+
+openai_client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY')) 
+
+def get_client():
+    client = openai.OpenAI(
+        api_key=os.getenv("QWEN_API_KEY"), # To obtain an API key, see https://www.alibabacloud.com/help/en/model-studio/developer-reference/get-api-key
+        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    )
+    return client
+
+client = get_client()
 class TextProcessor:
     def __init__(self):
         # Define the expert roles and their prompts
@@ -111,6 +125,7 @@ class TextProcessor:
 
         # Step 1: Initial analysis by all experts
         for role_id, role_info in tqdm(self.expert_roles.items(), desc="Expert Analysis"):
+            print(f"Processing role: {role_info['role']}")
             system_prompt = f"""You are a {role_info['role']} specializing in children's literature. Your task is to analyze the following text for children aged {target_age_group}.
 
             {role_info['prompt']}
@@ -118,15 +133,15 @@ class TextProcessor:
             Provide your analysis in a clear, structured format. Focus on making the content accessible and engaging for children."""
 
             try:
-                response = ollama.generate(
-                    model="qwen2.5:32b-instruct",
-                    prompt=text,
-                    system=system_prompt,
-                    keep_alive='1h',
-                    options={"num_ctx": 30720}
+                response = client.chat.completions.create(
+                    model="qwen-plus",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": text}
+                    ]
                 )
                 
-                analysis = response['response']
+                analysis = response.choices[0].message.content
                 results[role_id] = analysis
                 analysis_steps.append({
                     "role": role_info['role'],
@@ -157,15 +172,15 @@ class TextProcessor:
         {json.dumps(analysis_steps, indent=2)}"""
 
         try:
-            response = ollama.generate(
-                model="qwen2.5:32b-instruct",
-                prompt=text,
-                system=simplification_system_prompt,
-                keep_alive='1h',
-                options={"num_ctx": 30720}
+            response = client.chat.completions.create(
+                model="qwen-plus",
+                messages=[
+                    {"role": "system", "content": simplification_system_prompt},
+                    {"role": "user", "content": text}
+                ]
             )
             
-            simplified_text = response['response']
+            simplified_text = response.choices[0].message.content
             results['simplified_text'] = simplified_text
             
             # Extract character information
