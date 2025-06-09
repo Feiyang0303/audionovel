@@ -2,12 +2,23 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 from services.text_processor import TextProcessor
 from utils import save_uploaded_file, extract_text_from_pdf
 from werkzeug.utils import secure_filename
 
+# Load environment variables from .env file
+load_dotenv()
+
 app = Flask(__name__)
-CORS(app)
+# Configure CORS to allow all origins and methods
+CORS(app, resources={
+    r"/*": {
+        "origins": ["http://localhost:5173", "http://localhost:5174"],  # Allow both Vite ports
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"]
+    }
+})
 
 # Initialize the text processor
 text_processor = TextProcessor()
@@ -15,7 +26,7 @@ text_processor = TextProcessor()
 # Configuration
 UPLOAD_FOLDER = Path("uploads")
 AUDIO_OUTPUT_FOLDER = Path("audio_output")
-ALLOWED_EXTENSIONS = {'pdf', 'txt'}
+ALLOWED_EXTENSIONS = {'pdf', 'txt', 'epub', 'mobi'}
 
 # Ensure folders exist
 UPLOAD_FOLDER.mkdir(exist_ok=True)
@@ -73,6 +84,11 @@ def upload_file():
         # Extract text based on file type
         if file_path.suffix.lower() == '.pdf':
             text = extract_text_from_pdf(file_path)
+        elif file_path.suffix.lower() in {'.epub', '.mobi'}:
+            # For now, return error for unsupported formats
+            return jsonify({
+                "error": f"File type {file_path.suffix} is not yet supported. Please use PDF or TXT files."
+            }), 400
         else:
             # For text files, read directly
             text = file_path.read_text()
@@ -84,7 +100,14 @@ def upload_file():
         if result["status"] == "error":
             return jsonify(result), 500
 
-        return jsonify(result)
+        # Return the expected response format
+        return jsonify({
+            "status": "success",
+            "message": "File uploaded and processed successfully",
+            "filename": file_path.name,
+            "file_path": str(file_path),
+            "analysis": result
+        })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500

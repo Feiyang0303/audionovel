@@ -1,12 +1,29 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { uploadBook } from '../services/api'
+import type { UploadResponse } from '../services/api'
+
+const PROCESSING_STAGES = [
+  { name: 'Starting upload', progress: 5 },
+  { name: 'Uploading file', progress: 15 },
+  { name: 'Subject Research', progress: 25 },
+  { name: 'Subject Review', progress: 35 },
+  { name: 'Case Analysis', progress: 45 },
+  { name: 'Argument Analysis', progress: 55 },
+  { name: 'Development Analysis', progress: 65 },
+  { name: 'Content Aggregation', progress: 75 },
+  { name: 'Content Moderation', progress: 85 },
+  { name: 'Language Analysis', progress: 95 },
+  { name: 'Final Review', progress: 100 },
+]
 
 export function Upload() {
   const [file, setFile] = useState<File | null>(null)
   const [uploadProgress, setUploadProgress] = useState(0)
+  const [currentStage, setCurrentStage] = useState<string>('')
   const [isUploading, setIsUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [analysis, setAnalysis] = useState<UploadResponse['analysis'] | null>(null)
   const navigate = useNavigate()
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -26,28 +43,43 @@ export function Upload() {
     setIsUploading(true)
     setUploadProgress(0)
     setError(null)
+    setAnalysis(null)
+    setCurrentStage('Starting upload...')
 
     try {
-      // Simulate progress updates
+      // Start with initial progress
+      setUploadProgress(5)
+      setCurrentStage('Starting upload...')
+
+      // Start the progress updates immediately with a shorter interval
       const progressInterval = setInterval(() => {
         setUploadProgress(prev => {
-          if (prev >= 90) {
-            clearInterval(progressInterval)
-            return prev
+          // Find the next stage that's higher than current progress
+          const nextStage = PROCESSING_STAGES.find(stage => stage.progress > prev)
+          if (nextStage) {
+            setCurrentStage(nextStage.name)
+            return nextStage.progress
           }
-          return prev + 10
+          // If we're at the last stage, stay there
+          return prev >= 95 ? 95 : prev
         })
-      }, 500)
+      }, 20000) // Update every 20 seconds instead of 40
 
+      // Make the API call
       const response = await uploadBook(file)
+      
+      // Clear the interval and set final progress
       clearInterval(progressInterval)
       setUploadProgress(100)
+      setCurrentStage('Processing complete!')
+      setAnalysis(response.analysis)
       
       // Navigate to book view after successful upload
-      navigate(`/book/${response.filename}`)
+      navigate(`/book/${response.filename}`, { state: { analysis: response.analysis } })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed')
       setUploadProgress(0)
+      setCurrentStage('')
     } finally {
       setIsUploading(false)
     }
@@ -61,7 +93,7 @@ export function Upload() {
             Upload Your Book
           </h3>
           <div className="mt-4 max-w-2xl text-lg text-gray-500">
-            <p>Upload your children's book in PDF, TXT, EPUB, or MOBI format.</p>
+            <p>Upload your children's book in PDF or TXT format. EPUB and MOBI support coming soon!</p>
           </div>
           
           <div className="mt-8">
@@ -104,7 +136,7 @@ export function Upload() {
                   <div className="flex mb-3 items-center justify-between">
                     <div>
                       <span className="text-sm font-semibold inline-block py-1 px-3 uppercase rounded-full text-indigo-600 bg-indigo-200">
-                        Uploading
+                        {currentStage}
                       </span>
                     </div>
                     <div className="text-right">
@@ -119,6 +151,11 @@ export function Upload() {
                       className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-indigo-500 transition-all duration-500"
                     ></div>
                   </div>
+                  {uploadProgress < 100 && (
+                    <p className="text-sm text-gray-500 mt-2">
+                      This may take a few minutes as we analyze your text through multiple expert roles...
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -137,6 +174,29 @@ export function Upload() {
               </button>
             </div>
           </div>
+
+          {analysis && (
+            <div className="mt-8 p-4 bg-gray-50 rounded-lg">
+              <h4 className="text-lg font-medium text-gray-900 mb-4">Analysis Preview</h4>
+              <div className="prose max-w-none">
+                <h5 className="text-md font-medium text-gray-700 mb-2">Simplified Text:</h5>
+                <div className="text-gray-600 whitespace-pre-wrap">
+                  {analysis.simplified_text}
+                </div>
+                
+                <h5 className="text-md font-medium text-gray-700 mt-4 mb-2">Characters:</h5>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {analysis.characters.map((char, index) => (
+                    <div key={index} className="bg-white p-3 rounded shadow-sm">
+                      <p className="font-medium">{char.name}</p>
+                      <p className="text-sm text-gray-500">Appears {char.dialogue_count} times</p>
+                      <p className="text-sm text-gray-600 mt-1 italic">"{char.sample_dialogue}"</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

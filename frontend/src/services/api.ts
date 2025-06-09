@@ -4,9 +4,7 @@ const API_BASE_URL = 'http://localhost:5001'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  // Remove default headers to allow Content-Type to be set per request
 })
 
 export interface UploadResponse {
@@ -14,6 +12,18 @@ export interface UploadResponse {
   message: string
   file_path: string
   filename: string
+  analysis: {
+    status: string
+    target_age_group: string
+    simplified_text: string
+    characters: Array<{
+      name: string
+      dialogue_count: number
+      first_appearance: number
+      sample_dialogue: string
+    }>
+    // Add other analysis fields as needed
+  }
 }
 
 export interface SimplifyResponse {

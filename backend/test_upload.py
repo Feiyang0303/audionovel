@@ -44,22 +44,12 @@ def test_file_upload(file_path):
             print(f"Error during upload: {str(e)}")
 
 def main():
-    # Create test files
-    test_dir = Path('test_files')
-    test_dir.mkdir(exist_ok=True)
-    
-    # Create a test text file
-    txt_path = test_dir / 'test.txt'
-    with open(txt_path, 'w', encoding='utf-8') as f:
-        f.write("This is a test text file.\nIt has multiple lines.\nFor testing purposes.")
+    # Test the Hamlet file
+    hamlet_path = '../test_files/hamlet-002-act-1-scene-1.pdf'
     
     # Test different file types
     test_files = [
-        str(txt_path),
-        # Add more test files here as needed
-        # 'test_files/test.epub',
-        # 'test_files/test.mobi',
-        # 'test_files/test.pdf'
+        hamlet_path,
     ]
     
     # Run tests
