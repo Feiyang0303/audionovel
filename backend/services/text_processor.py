@@ -67,7 +67,7 @@ class TextProcessor:
             }
         }
 
-    def process_text(self, text: str, target_age_group: str = "8-12") -> Dict:
+    def process_text(self, text: str, target_age_group: str = "8-12", progress_callback=None) -> Dict:
         """
         Process the text through all expert roles and generate a simplified version using Qwen.
         """
@@ -89,13 +89,27 @@ class TextProcessor:
                 )
                 analysis = response_json["choices"][0]["message"]["content"]
                 results[role_id] = analysis
+                step = {
+                    "role": role_info['role'],
+                    "status": "completed",
+                    "timestamp": datetime.utcnow().isoformat() + 'Z'
+                }
                 analysis_steps.append({
                     "role": role_info['role'],
                     "analysis": analysis
                 })
+                if progress_callback:
+                    progress_callback(step)
             except Exception as e:
                 print(f"Error in {role_id} analysis: {str(e)}")
                 results[role_id] = f"Error: {str(e)}"
+                step = {
+                    "role": role_info['role'],
+                    "status": f"error: {str(e)}",
+                    "timestamp": datetime.utcnow().isoformat() + 'Z'
+                }
+                if progress_callback:
+                    progress_callback(step)
 
         # Step 2: Generate simplified version with character dialogue
         simplification_system_prompt = f"""Based on the expert analyses, create a simplified version of the text that is appropriate for children aged {target_age_group}.\n\nCreate a simplified version that:\n1. Maintains the original story and message\n2. Uses age-appropriate language\n3. Includes clear dialogue attribution for all characters\n4. Is engaging and easy to follow\n5. Preserves key themes and lessons\n\nFormat the output with clear speaker attributions (e.g., \"NARRATOR:\", \"CHARACTER_NAME:\") and include:\n- A narrator for descriptive passages\n- Distinct character voices for dialogue\n- Clear scene transitions\n- Emotional expressions and reactions\n- Age-appropriate descriptions\n\nExpert Analyses:\n{json.dumps(analysis_steps, indent=2)}"""

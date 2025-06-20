@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { uploadBook } from '../services/api'
+import { uploadBook, getStatus } from '../services/api'
 import type { UploadResponse } from '../services/api'
 
 const PROCESSING_STAGES = [
@@ -25,6 +25,48 @@ export function Upload() {
   const [error, setError] = useState<string | null>(null)
   const [analysis, setAnalysis] = useState<UploadResponse['analysis'] | null>(null)
   const navigate = useNavigate()
+  const pollingRef = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current)
+    }
+  }, [])
+
+  const pollStatus = async (filename: string) => {
+    try {
+      const poll = async () => {
+        const status = await getStatus(filename)
+        const steps = status.processing_steps || []
+        const totalSteps = 10 // Number of expert roles
+        let completedSteps = 0
+        let lastCompletedRole = ''
+        steps.forEach((step: any) => {
+          if (step.status === 'completed') {
+            completedSteps++
+            lastCompletedRole = step.role
+          }
+        })
+        const progress = totalSteps > 0 ? 5 + Math.round((completedSteps / totalSteps) * 95) : 100
+        setUploadProgress(progress)
+        setCurrentStage(lastCompletedRole ? `Completed: ${lastCompletedRole}` : 'Processing...')
+        if (status.status === 'complete') {
+          // Stop polling
+          if (pollingRef.current) clearInterval(pollingRef.current)
+          setUploadProgress(100)
+          setCurrentStage('Processing complete!')
+          setAnalysis(status.analysis)
+          navigate(`/book/${filename}`, { state: { analysis: status.analysis } })
+        }
+      }
+      pollingRef.current = setInterval(poll, 2000)
+      // Run immediately for instant feedback
+      poll()
+    } catch (err) {
+      setError('Failed to poll status')
+      if (pollingRef.current) clearInterval(pollingRef.current)
+    }
+  }
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0]
@@ -47,35 +89,11 @@ export function Upload() {
     setCurrentStage('Starting upload...')
 
     try {
-      // Start with initial progress
       setUploadProgress(5)
-      setCurrentStage('Starting upload...')
-
-      // Start the progress updates immediately with a shorter interval
-      const progressInterval = setInterval(() => {
-        setUploadProgress(prev => {
-          // Find the next stage that's higher than current progress
-          const nextStage = PROCESSING_STAGES.find(stage => stage.progress > prev)
-          if (nextStage) {
-            setCurrentStage(nextStage.name)
-            return nextStage.progress
-          }
-          // If we're at the last stage, stay there
-          return prev >= 95 ? 95 : prev
-        })
-      }, 20000) // Update every 20 seconds instead of 40
-
-      // Make the API call
+      setCurrentStage('Uploading file...')
       const response = await uploadBook(file)
-      
-      // Clear the interval and set final progress
-      clearInterval(progressInterval)
-      setUploadProgress(100)
-      setCurrentStage('Processing complete!')
-      setAnalysis(response.analysis)
-      
-      // Navigate to book view after successful upload
-      navigate(`/book/${response.filename}`, { state: { analysis: response.analysis } })
+      // Start polling for status updates
+      pollStatus(response.filename)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed')
       setUploadProgress(0)
@@ -130,7 +148,7 @@ export function Upload() {
               </div>
             )}
 
-            {isUploading && (
+            {(isUploading || uploadProgress > 0) && (
               <div className="mt-6">
                 <div className="relative pt-1">
                   <div className="flex mb-3 items-center justify-between">
@@ -175,24 +193,13 @@ export function Upload() {
             </div>
           </div>
 
-          {analysis && (
+          {/* Script Preview Box */}
+          {analysis && analysis.simplified_text && (
             <div className="mt-8 p-4 bg-gray-50 rounded-lg">
-              <h4 className="text-lg font-medium text-gray-900 mb-4">Analysis Preview</h4>
+              <h4 className="text-lg font-medium text-gray-900 mb-4">Script Preview</h4>
               <div className="prose max-w-none">
-                <h5 className="text-md font-medium text-gray-700 mb-2">Simplified Text:</h5>
                 <div className="text-gray-600 whitespace-pre-wrap">
                   {analysis.simplified_text}
-                </div>
-                
-                <h5 className="text-md font-medium text-gray-700 mt-4 mb-2">Characters:</h5>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {analysis.characters.map((char, index) => (
-                    <div key={index} className="bg-white p-3 rounded shadow-sm">
-                      <p className="font-medium">{char.name}</p>
-                      <p className="text-sm text-gray-500">Appears {char.dialogue_count} times</p>
-                      <p className="text-sm text-gray-600 mt-1 italic">"{char.sample_dialogue}"</p>
-                    </div>
-                  ))}
                 </div>
               </div>
             </div>

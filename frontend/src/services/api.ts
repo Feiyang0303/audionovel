@@ -22,6 +22,11 @@ export interface UploadResponse {
       first_appearance: number
       sample_dialogue: string
     }>
+    processing_steps?: Array<{
+      role: string
+      status: string
+      timestamp?: string
+    }>
     // Add other analysis fields as needed
   }
 }
@@ -58,4 +63,9 @@ export const generateAudiobook = async (text: string): Promise<AudiobookResponse
 }
 
 export const getFileUrl = (filename: string) => `${API_BASE_URL}/files/${filename}`
-export const getAudioUrl = (filename: string) => `${API_BASE_URL}/audio/${filename}` 
+export const getAudioUrl = (filename: string) => `${API_BASE_URL}/audio/${filename}`
+
+export const getStatus = async (filename: string) => {
+  const response = await api.get(`/status/${filename}`)
+  return response.data
+} 

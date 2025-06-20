@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from services.text_processor import TextProcessor
 from utils import save_uploaded_file, extract_text_from_pdf
 from werkzeug.utils import secure_filename
+from threading import Lock, Thread
 
 # Load environment variables from .env file
 load_dotenv()
@@ -36,6 +37,10 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['AUDIO_FOLDER'] = AUDIO_OUTPUT_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB limit
 
+# Global dictionary to track progress for each file (filename: progress dict)
+progress_tracker = {}
+progress_lock = Lock()
+
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -65,6 +70,14 @@ def process_text():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/status/<filename>', methods=['GET'])
+def get_status(filename):
+    with progress_lock:
+        progress = progress_tracker.get(filename)
+    if not progress:
+        return jsonify({"status": "not_found", "message": "No progress found for this file."}), 404
+    return jsonify(progress)
+
 @app.route('/upload', methods=['POST'])
 def upload_file():
     try:
@@ -80,33 +93,42 @@ def upload_file():
 
         # Save the uploaded file
         file_path = save_uploaded_file(file, UPLOAD_FOLDER)
-        
+        filename = file_path.name
         # Extract text based on file type
         if file_path.suffix.lower() == '.pdf':
             text = extract_text_from_pdf(file_path)
         elif file_path.suffix.lower() in {'.epub', '.mobi'}:
-            # For now, return error for unsupported formats
             return jsonify({
                 "error": f"File type {file_path.suffix} is not yet supported. Please use PDF or TXT files."
             }), 400
         else:
-            # For text files, read directly
             text = file_path.read_text()
 
-        # Process the extracted text using Qwen
+        # Initialize progress
+        with progress_lock:
+            progress_tracker[filename] = {"status": "processing", "processing_steps": []}
+
         target_age_group = request.form.get('target_age_group', '8-12')
-        result = text_processor.process_text(text, target_age_group)
 
-        if result["status"] == "error":
-            return jsonify(result), 500
+        def process_in_background():
+            def progress_callback(step):
+                with progress_lock:
+                    progress_tracker[filename]["processing_steps"].append(step.copy())
+            result = text_processor.process_text(text, target_age_group, progress_callback=progress_callback)
+            with progress_lock:
+                progress_tracker[filename]["status"] = "complete"
+                progress_tracker[filename]["analysis"] = result
 
-        # Return the expected response format
+        # Start background thread
+        thread = Thread(target=process_in_background)
+        thread.start()
+
+        # Immediately return response so frontend can poll status
         return jsonify({
-            "status": "success",
-            "message": "File uploaded and processed successfully",
-            "filename": file_path.name,
-            "file_path": str(file_path),
-            "analysis": result
+            "status": "processing",
+            "message": "File uploaded and processing started",
+            "filename": filename,
+            "file_path": str(file_path)
         })
 
     except Exception as e:
