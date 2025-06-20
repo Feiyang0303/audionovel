@@ -22,11 +22,6 @@ export interface UploadResponse {
       first_appearance: number
       sample_dialogue: string
     }>
-    processing_steps?: Array<{
-      role: string
-      status: string
-      timestamp?: string
-    }>
     // Add other analysis fields as needed
   }
 }

@@ -40,20 +40,6 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@app.route('/', methods=['GET'])
-def index():
-    return jsonify({
-        "message": "AudioNovel Backend is running!",
-        "version": "1.0.0",
-        "endpoints": {
-            "health": "/health (GET) - Health check",
-            "upload": "/upload (POST) - Upload and process files",
-            "process": "/process (POST) - Process text directly",
-            "audio": "/audio/<filename> (GET) - Get audio files"
-        },
-        "status": "ready"
-    })
-
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({"status": "healthy", "message": "Service is running"})
