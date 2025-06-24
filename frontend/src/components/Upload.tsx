@@ -24,8 +24,10 @@ export function Upload() {
   const [isUploading, setIsUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [analysis, setAnalysis] = useState<UploadResponse['analysis'] | null>(null)
+  const [livePreview, setLivePreview] = useState<string | null>(null)
   const navigate = useNavigate()
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     return () => {
@@ -58,6 +60,9 @@ export function Upload() {
           setAnalysis(status.analysis)
           navigate(`/book/${filename}`, { state: { analysis: status.analysis } })
         }
+        if (status.analysis && status.analysis.simplified_text) {
+          setLivePreview(status.analysis.simplified_text)
+        }
       }
       pollingRef.current = setInterval(poll, 2000)
       // Run immediately for instant feedback
@@ -74,6 +79,25 @@ export function Upload() {
       setFile(selectedFile)
       setError(null)
     }
+  }
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+      setFile(event.dataTransfer.files[0])
+      setError(null)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+  }
+
+  const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
   }
 
   const handleUpload = async () => {
@@ -115,8 +139,17 @@ export function Upload() {
           </div>
           
           <div className="mt-8">
-            <div className="flex items-center justify-center w-full">
-              <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100">
+            <div
+              className="flex items-center justify-center w-full"
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+            >
+              <label
+                className="flex flex-col items-center justify-center w-full h-40 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100"
+                onClick={() => fileInputRef.current?.click()}
+                htmlFor="file-upload"
+              >
                 <div className="flex flex-col items-center justify-center pt-6 pb-8">
                   <svg className="w-12 h-12 mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
@@ -127,11 +160,13 @@ export function Upload() {
                   <p className="text-sm text-gray-500">PDF, TXT, EPUB, or MOBI</p>
                 </div>
                 <input
+                  id="file-upload"
                   type="file"
                   className="hidden"
                   accept=".pdf,.txt,.epub,.mobi"
                   onChange={handleFileChange}
                   disabled={isUploading}
+                  ref={fileInputRef}
                 />
               </label>
             </div>
@@ -194,7 +229,7 @@ export function Upload() {
           </div>
 
           {/* Script Preview Box */}
-          {analysis && analysis.simplified_text && (
+          {analysis && analysis.simplified_text ? (
             <div className="mt-8 p-4 bg-gray-50 rounded-lg">
               <h4 className="text-lg font-medium text-gray-900 mb-4">Script Preview</h4>
               <div className="prose max-w-none">
@@ -203,7 +238,16 @@ export function Upload() {
                 </div>
               </div>
             </div>
-          )}
+          ) : livePreview ? (
+            <div className="mt-8 p-4 bg-gray-50 rounded-lg">
+              <h4 className="text-lg font-medium text-gray-900 mb-4">Script Preview (Live)</h4>
+              <div className="prose max-w-none">
+                <div className="text-gray-600 whitespace-pre-wrap">
+                  {livePreview}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
