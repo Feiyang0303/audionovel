@@ -58,7 +58,7 @@ export function Upload() {
           setUploadProgress(100)
           setCurrentStage('Processing complete!')
           setAnalysis(status.analysis)
-          navigate(`/book/${filename}`, { state: { analysis: status.analysis } })
+          // navigate(`/book/${filename}`, { state: { analysis: status.analysis } })
         }
         if (status.analysis && status.analysis.simplified_text) {
           setLivePreview(status.analysis.simplified_text)
