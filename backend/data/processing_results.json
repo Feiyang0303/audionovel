@@ -1,0 +1,18 @@
+[
+  {
+    "simplified_text": "This is a test simplified text.",
+    "characters": [
+      {
+        "name": "Narrator",
+        "dialogue_count": 1
+      }
+    ],
+    "expert_analyses": {
+      "test_analyst": "Test analysis"
+    },
+    "_id": "1",
+    "file_id": "1",
+    "processing_date": "2025-07-27T02:56:49.668012",
+    "status": "processing"
+  }
+]

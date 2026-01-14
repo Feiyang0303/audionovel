@@ -1,0 +1,13 @@
+[
+  {
+    "filename": "test_file.txt",
+    "original_filename": "test_file.txt",
+    "file_path": "/test/path/test_file.txt",
+    "file_size": 1024,
+    "file_type": "txt",
+    "target_age_group": "8-12",
+    "_id": "1",
+    "upload_date": "2025-07-27T02:56:49.667573",
+    "status": "uploaded"
+  }
+]

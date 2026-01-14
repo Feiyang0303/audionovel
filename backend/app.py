@@ -4,6 +4,9 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 from services.text_processor import TextProcessor
+from services.dialogue_generator import generate_dialogue_audio
+from services.cohere_embeddings import generate_embedding, search_similar
+from services.audio_tag_enhancer import enhance_dialogue_with_audio_tags
 from utils import save_uploaded_file, extract_text_from_pdf
 from werkzeug.utils import secure_filename
 from threading import Lock, Thread
@@ -11,19 +14,28 @@ from datetime import datetime
 import time
 
 # Import MongoDB models
-from models.database import init_db, get_file_model, get_processing_model
+from models.database import init_db, get_file_model, get_processing_model, get_user_model, get_library_model
+
+# Import authentication and library routes
+from routes.auth import auth_bp
+from routes.library import library_bp
 
 # Load environment variables from .env file
 load_dotenv()
 
 app = Flask(__name__)
 
-# Configure CORS to allow all origins and methods
+# Configure CORS to allow frontend dev server and auth headers
 CORS(app, resources={
     r"/*": {
-        "origins": ["http://localhost:5173", "http://localhost:5174"],  # Allow both Vite ports
-        "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type"]
+        "origins": [
+            "http://localhost:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:5174",
+        ],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
     }
 })
 
@@ -45,6 +57,10 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB limit
 
 # Initialize MongoDB
 init_db()
+
+# Register blueprints
+app.register_blueprint(auth_bp, url_prefix='/auth')
+app.register_blueprint(library_bp, url_prefix='/api')
 
 def allowed_file(filename):
     return '.' in filename and \
@@ -92,7 +108,8 @@ def get_status(filename):
         if not processing_result:
             return jsonify({
                 "status": "uploaded",
-                "message": "File uploaded, processing not started yet."
+                "message": "File uploaded, processing not started yet.",
+                "file_id": uploaded_file['_id']
             })
         
         # Build response with processing steps
@@ -101,7 +118,8 @@ def get_status(filename):
         response = {
             "status": processing_result['status'],
             "processing_steps": processing_steps,
-            "processing_date": processing_result['processing_date'].isoformat() if processing_result.get('processing_date') else None
+            "processing_date": processing_result['processing_date'].isoformat() if processing_result.get('processing_date') else None,
+            "file_id": uploaded_file['_id']
         }
         
         # Add analysis data if completed
@@ -136,6 +154,21 @@ def upload_file():
         filename = file_path.name
         file_type = file_path.suffix.lower()[1:]  # Remove the dot
         
+        # Ensure unique filename in DB and on disk
+        file_model = get_file_model()
+        existing = file_model.get_file_by_filename(filename)
+        if existing:
+            base = file_path.stem
+            suffix = file_path.suffix
+            unique_name = f"{base}-{int(time.time())}{suffix}"
+            new_path = file_path.with_name(unique_name)
+            try:
+                file_path.rename(new_path)
+                file_path = new_path
+                filename = unique_name
+            except Exception as e:
+                return jsonify({"error": f"Failed to resolve filename conflict: {str(e)}"}), 500
+        
         # Extract text based on file type
         if file_path.suffix.lower() == '.pdf':
             text = extract_text_from_pdf(file_path)
@@ -149,7 +182,6 @@ def upload_file():
         target_age_group = request.form.get('target_age_group', '8-12')
 
         # Create database record for uploaded file
-        file_model = get_file_model()
         file_data = {
             'filename': filename,
             'original_filename': file.filename,
@@ -186,9 +218,18 @@ def upload_file():
                 end_time = time.time()
                 processing_duration = end_time - start_time
                 
+                # Generate embedding for the simplified text (for semantic search)
+                simplified_text = result.get('simplified_text', '')
+                embedding = None
+                if simplified_text:
+                    try:
+                        embedding = generate_embedding(simplified_text)
+                    except Exception as emb_err:
+                        print(f"Embedding generation failed: {emb_err}")
+                
                 # Update processing result
                 update_data = {
-                    'simplified_text': result.get('simplified_text', ''),
+                    'simplified_text': simplified_text,
                     'characters': result.get('characters', []),
                     'expert_analyses': result.get('analysis', {}),
                     'processing_steps': processing_steps,
@@ -196,6 +237,8 @@ def upload_file():
                     'status': 'completed' if result.get('status') == 'success' else 'error',
                     'error_message': result.get('message', '') if result.get('status') == 'error' else None
                 }
+                if embedding:
+                    update_data['embedding'] = embedding
                 
                 processing_model.update_result(result_id, update_data)
                 
@@ -281,7 +324,9 @@ def get_file_details(file_id):
             "file_size": uploaded_file['file_size'],
             "upload_date": uploaded_file['upload_date'].isoformat(),
             "status": uploaded_file['status'],
-            "target_age_group": uploaded_file.get('target_age_group', '8-12')
+            "target_age_group": uploaded_file.get('target_age_group', '8-12'),
+            "created_at": uploaded_file.get('created_at', uploaded_file['upload_date']).isoformat(),
+            "updated_at": uploaded_file.get('updated_at', uploaded_file['upload_date']).isoformat()
         }
         
         # Add processing result if available
@@ -296,11 +341,253 @@ def get_file_details(file_id):
                 "characters": processing_result.get('characters', []),
                 "expert_analyses": processing_result.get('expert_analyses', {}),
                 "processing_steps": processing_result.get('processing_steps', []),
-                "error_message": processing_result.get('error_message')
+                "error_message": processing_result.get('error_message'),
+                "created_at": processing_result.get('created_at', processing_result['processing_date']).isoformat(),
+                "updated_at": processing_result.get('updated_at', processing_result['processing_date']).isoformat()
             }
         
         return jsonify(file_data)
         
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/files/<file_id>', methods=['DELETE'])
+def delete_file(file_id):
+    """Delete a file and its processing result"""
+    try:
+        file_model = get_file_model()
+        processing_model = get_processing_model()
+        
+        # Get file details first
+        uploaded_file = file_model.get_file_by_id(file_id)
+        if not uploaded_file:
+            return jsonify({"error": "File not found"}), 404
+        
+        # Delete the physical file if it exists
+        try:
+            file_path = Path(uploaded_file['file_path'])
+            if file_path.exists():
+                file_path.unlink()
+        except Exception as e:
+            print(f"Warning: Could not delete physical file: {e}")
+        
+        # Delete processing result if exists
+        processing_result = processing_model.get_result_by_file_id(file_id)
+        if processing_result:
+            processing_model.delete_result(processing_result['_id'])
+        
+        # Delete file record
+        success = file_model.delete_file(file_id)
+        
+        if success:
+            return jsonify({"message": "File deleted successfully"})
+        else:
+            return jsonify({"error": "Failed to delete file"}), 500
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/files/status/<status>', methods=['GET'])
+def get_files_by_status(status):
+    """Get files by status"""
+    try:
+        file_model = get_file_model()
+        files = file_model.get_files_by_status(status)
+        
+        file_list = []
+        for file in files:
+            file_data = {
+                "id": file['_id'],
+                "filename": file['filename'],
+                "original_filename": file['original_filename'],
+                "file_type": file['file_type'],
+                "file_size": file['file_size'],
+                "upload_date": file['upload_date'].isoformat(),
+                "status": file['status'],
+                "target_age_group": file.get('target_age_group', '8-12')
+            }
+            file_list.append(file_data)
+        
+        return jsonify({"files": file_list, "count": len(file_list)})
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/files/type/<file_type>', methods=['GET'])
+def get_files_by_type(file_type):
+    """Get files by file type"""
+    try:
+        file_model = get_file_model()
+        files = file_model.get_files_by_type(file_type)
+        
+        file_list = []
+        for file in files:
+            file_data = {
+                "id": file['_id'],
+                "filename": file['filename'],
+                "original_filename": file['original_filename'],
+                "file_type": file['file_type'],
+                "file_size": file['file_size'],
+                "upload_date": file['upload_date'].isoformat(),
+                "status": file['status'],
+                "target_age_group": file.get('target_age_group', '8-12')
+            }
+            file_list.append(file_data)
+        
+        return jsonify({"files": file_list, "count": len(file_list)})
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/stats', methods=['GET'])
+def get_stats():
+    """Get database statistics"""
+    try:
+        file_model = get_file_model()
+        processing_model = get_processing_model()
+        
+        # Get counts
+        total_files = file_model.get_files_count()
+        total_results = processing_model.get_results_count()
+        
+        # Get files by status
+        uploaded_files = len(file_model.get_files_by_status('uploaded'))
+        processing_files = len(file_model.get_files_by_status('processing'))
+        completed_files = len(file_model.get_files_by_status('completed'))
+        error_files = len(file_model.get_files_by_status('error'))
+        
+        # Get results by status
+        completed_results = len(processing_model.get_results_by_status('completed'))
+        processing_results = len(processing_model.get_results_by_status('processing'))
+        error_results = len(processing_model.get_results_by_status('error'))
+        
+        # Get files by type
+        pdf_files = len(file_model.get_files_by_type('pdf'))
+        txt_files = len(file_model.get_files_by_type('txt'))
+        
+        stats = {
+            "files": {
+                "total": total_files,
+                "by_status": {
+                    "uploaded": uploaded_files,
+                    "processing": processing_files,
+                    "completed": completed_files,
+                    "error": error_files
+                },
+                "by_type": {
+                    "pdf": pdf_files,
+                    "txt": txt_files
+                }
+            },
+            "processing_results": {
+                "total": total_results,
+                "by_status": {
+                    "completed": completed_results,
+                    "processing": processing_results,
+                    "error": error_results
+                }
+            }
+        }
+        
+        return jsonify(stats)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/search', methods=['POST'])
+def semantic_search():
+    """Semantic search across processed scripts using Cohere embeddings.
+    
+    Expects JSON body: { "query": "search text", "limit": 5 }
+    Returns matching processing results with similarity scores.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        query = data.get('query', '').strip()
+        limit = data.get('limit', 5)
+        
+        if not query:
+            return jsonify({"error": "Query is required"}), 400
+        
+        # Get the processing_results collection directly
+        from models.database import db_instance
+        if not db_instance:
+            return jsonify({"error": "Database not initialized"}), 500
+        
+        collection = db_instance.db['processing_results']
+        
+        results = search_similar(query, collection, limit=limit)
+        
+        # Enrich results with file info
+        file_model = get_file_model()
+        enriched = []
+        for r in results:
+            file_data = file_model.get_file_by_id(r.get('file_id'))
+            enriched.append({
+                "score": r.get('score'),
+                "simplified_text": r.get('simplified_text', '')[:500] + '...' if len(r.get('simplified_text', '')) > 500 else r.get('simplified_text', ''),
+                "characters": r.get('characters', []),
+                "file": {
+                    "id": file_data['_id'] if file_data else None,
+                    "filename": file_data['filename'] if file_data else None,
+                    "original_filename": file_data['original_filename'] if file_data else None
+                } if file_data else None
+            })
+        
+        return jsonify({
+            "query": query,
+            "results": enriched,
+            "count": len(enriched)
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/save-to-library', methods=['POST'])
+def save_to_library():
+    """Save a processed file to user's library"""
+    try:
+        from middleware.auth import require_auth
+        from routes.library import add_to_library
+        
+        # This will be handled by the library blueprint
+        return add_to_library()
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/dialogue/convert', methods=['POST'])
+def dialogue_convert():
+    """Convert text inputs to dialogue audio using ElevenLabs.
+
+    Expects JSON body: { "inputs": [ {"text": str, "voice_id": str}, ... ] }
+    Returns saved audio filename and URL.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        inputs = data.get('inputs')
+        if not inputs or not isinstance(inputs, list):
+            return jsonify({"error": "'inputs' must be a non-empty list of {text, voice_id}"}), 400
+
+        filename = generate_dialogue_audio(inputs)
+        return jsonify({
+            "message": "Dialogue audio generated",
+            "audio_file": filename,
+            "url": f"/audio/{filename}"
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/dialogue/enhance', methods=['POST'])
+def dialogue_enhance():
+    """Enhance dialogue text by inserting audio tags while preserving original words."""
+    try:
+        data = request.get_json(silent=True) or {}
+        text = data.get('text', '').strip()
+        if not text:
+            return jsonify({"error": "Field 'text' is required"}), 400
+        enhanced = enhance_dialogue_with_audio_tags(text)
+        return jsonify({"enhanced_text": enhanced})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

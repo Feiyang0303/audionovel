@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { uploadBook, getStatus } from '../services/api'
+import { addToLibrary } from '../services/library'
+import { useAuth } from '../App'
 import type { UploadResponse } from '../services/api'
 
 const PROCESSING_STAGES = [
@@ -25,9 +27,14 @@ export function Upload() {
   const [error, setError] = useState<string | null>(null)
   const [analysis, setAnalysis] = useState<UploadResponse['analysis'] | null>(null)
   const [livePreview, setLivePreview] = useState<string | null>(null)
+  const [isSavingToLibrary, setIsSavingToLibrary] = useState(false)
+  const [savedToLibrary, setSavedToLibrary] = useState(false)
+  const [currentFilename, setCurrentFilename] = useState<string | null>(null)
+  const [currentFileId, setCurrentFileId] = useState<string | null>(null)
   const navigate = useNavigate()
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const { isAuthenticated } = useAuth()
 
   useEffect(() => {
     return () => {
@@ -52,13 +59,20 @@ export function Upload() {
         const progress = totalSteps > 0 ? 5 + Math.round((completedSteps / totalSteps) * 95) : 100
         setUploadProgress(progress)
         setCurrentStage(lastCompletedRole ? `Completed: ${lastCompletedRole}` : 'Processing...')
-        if (status.status === 'complete') {
+        if (status.status === 'completed') {
           // Stop polling
           if (pollingRef.current) clearInterval(pollingRef.current)
           setUploadProgress(100)
           setCurrentStage('Processing complete!')
           setAnalysis(status.analysis)
+          setCurrentFilename(filename)
+          if (status.file_id) {
+            setCurrentFileId(status.file_id)
+          }
           // navigate(`/book/${filename}`, { state: { analysis: status.analysis } })
+        }
+        if (!currentFileId && status.file_id) {
+          setCurrentFileId(status.file_id)
         }
         if (status.analysis && status.analysis.simplified_text) {
           setLivePreview(status.analysis.simplified_text)
@@ -124,6 +138,36 @@ export function Upload() {
       setCurrentStage('')
     } finally {
       setIsUploading(false)
+    }
+  }
+
+  const handleSaveToLibrary = async () => {
+    if (!isAuthenticated) {
+      setError('Please login to save to library')
+      return
+    }
+
+    if (!analysis || !currentFileId) {
+      setError('No processed content to save (missing file id)')
+      return
+    }
+
+    setIsSavingToLibrary(true)
+    setError(null)
+
+    try {
+      await addToLibrary({
+        file_id: currentFileId,
+        title: file?.name || 'Untitled Book',
+        description: 'Processed with AudioNovel - Simplified text available'
+      })
+      
+      setSavedToLibrary(true)
+      setTimeout(() => setSavedToLibrary(false), 3000) // Reset after 3 seconds
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save to library')
+    } finally {
+      setIsSavingToLibrary(false)
     }
   }
 
@@ -231,12 +275,47 @@ export function Upload() {
           {/* Script Preview Box */}
           {analysis && analysis.simplified_text ? (
             <div className="mt-8 p-4 bg-gray-50 rounded-lg">
-              <h4 className="text-lg font-medium text-gray-900 mb-4">Script Preview</h4>
+              <div className="flex justify-between items-center mb-4">
+                <h4 className="text-lg font-medium text-gray-900">Script Preview</h4>
+                {isAuthenticated && (
+                  <button
+                    onClick={handleSaveToLibrary}
+                    disabled={isSavingToLibrary || savedToLibrary}
+                    className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-md shadow-sm text-white 
+                      ${isSavingToLibrary || savedToLibrary
+                        ? 'bg-green-400 cursor-not-allowed' 
+                        : 'bg-green-600 hover:bg-green-700'}`}
+                  >
+                    {isSavingToLibrary ? 'Saving...' : savedToLibrary ? 'Saved!' : 'Save to Library'}
+                  </button>
+                )}
+              </div>
               <div className="prose max-w-none">
                 <div className="text-gray-600 whitespace-pre-wrap">
                   {analysis.simplified_text}
                 </div>
               </div>
+              {!isAuthenticated && (
+                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                  <p className="text-sm text-blue-700">
+                    💡 <strong>Want to save this to your library?</strong> Please{' '}
+                    <button 
+                      onClick={() => navigate('/login')}
+                      className="text-blue-600 hover:text-blue-800 underline font-medium"
+                    >
+                      login
+                    </button>{' '}
+                    or{' '}
+                    <button 
+                      onClick={() => navigate('/register')}
+                      className="text-blue-600 hover:text-blue-800 underline font-medium"
+                    >
+                      sign up
+                    </button>{' '}
+                    to save your processed books.
+                  </p>
+                </div>
+              )}
             </div>
           ) : livePreview ? (
             <div className="mt-8 p-4 bg-gray-50 rounded-lg">

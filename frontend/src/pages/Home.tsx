@@ -1,61 +1,29 @@
 import { Link } from 'react-router-dom'
+import { useAuth } from '../App'
 
 export function Home() {
+  const { isAuthenticated } = useAuth()
+  
   return (
     <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-blue-50 via-indigo-50 to-blue-100">
-      {/* Enhanced gradient background */}
+      {/* Gradient background */}
       <div className="absolute inset-0">
-        {/* Base gradient layers */}
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(120,119,198,0.15),rgba(255,255,255,0))]"></div>
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_0%_0%,rgba(147,197,253,0.12),rgba(255,255,255,0))]"></div>
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_100%_0%,rgba(129,140,248,0.12),rgba(255,255,255,0))]"></div>
+        {/* Base gradient */}
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50"></div>
         
         {/* Animated gradient layers */}
-        <div className="absolute inset-0 animate-gradient-shift bg-[length:400%_400%] bg-gradient-to-r from-blue-100/15 via-indigo-100/15 to-blue-200/15"></div>
-        <div className="absolute inset-0 animate-gradient-shift-reverse bg-[length:400%_400%] bg-gradient-to-br from-indigo-100/10 via-blue-100/10 to-indigo-200/10"></div>
-        <div className="absolute inset-0 animate-gradient-shift bg-[length:300%_300%] bg-gradient-to-bl from-blue-50/10 via-indigo-50/10 to-blue-100/10"></div>
+        <div className="absolute inset-0 animate-gradient-shift bg-[length:400%_400%] bg-gradient-to-r from-blue-100/20 via-indigo-100/20 to-purple-100/20"></div>
+        <div className="absolute inset-0 animate-gradient-shift-reverse bg-[length:400%_400%] bg-gradient-to-br from-indigo-100/15 via-purple-100/15 to-blue-100/15"></div>
         
-        {/* Dark blue particles */}
-        <div className="absolute inset-0">
-          {[...Array(80)].map((_, i) => (
-            <div
-              key={i}
-              className={`absolute w-[3px] h-[3px] rounded-full bg-blue-900/70 animate-float-${i % 3 + 1}`}
-              style={{
-                left: `${Math.random() * 100}%`,
-                top: `${Math.random() * 100}%`,
-                animationDelay: `${Math.random() * 5}s`,
-                transform: `scale(${0.5 + Math.random() * 0.5})`,
-              }}
-            />
-          ))}
-        </div>
-
-        {/* Smaller particles */}
-        <div className="absolute inset-0">
-          {[...Array(120)].map((_, i) => (
-            <div
-              key={`tiny-${i}`}
-              className={`absolute w-[2px] h-[2px] rounded-full bg-blue-800/60 animate-float-${i % 3 + 1}`}
-              style={{
-                left: `${Math.random() * 100}%`,
-                top: `${Math.random() * 100}%`,
-                animationDelay: `${Math.random() * 7}s`,
-                transform: `scale(${0.3 + Math.random() * 0.4})`,
-              }}
-            />
-          ))}
-        </div>
-
         {/* Soft glowing orbs */}
         <div className="absolute inset-0">
-          {[...Array(5)].map((_, i) => (
+          {[...Array(3)].map((_, i) => (
             <div
               key={`orb-${i}`}
-              className={`absolute w-[40rem] h-[40rem] rounded-full bg-gradient-to-r from-blue-200/8 to-indigo-200/8 blur-[120px] animate-orb-${i + 1}`}
+              className={`absolute w-[50rem] h-[50rem] rounded-full bg-gradient-to-r from-blue-200/10 to-indigo-200/10 blur-[150px] animate-orb-${i + 1}`}
               style={{
-                left: `${10 + i * 20}%`,
-                top: `${15 + i * 10}%`,
+                left: `${20 + i * 30}%`,
+                top: `${20 + i * 20}%`,
               }}
             />
           ))}
@@ -71,26 +39,49 @@ export function Home() {
           <p className="text-2xl sm:text-3xl text-gray-700 mb-12 drop-shadow-sm">
             Transform your books into engaging audiobooks with AI-powered narration
           </p>
-          <Link
-            to="/upload"
-            className="inline-flex items-center px-8 py-4 text-xl font-medium rounded-lg shadow-lg text-white bg-indigo-600/90 hover:bg-indigo-700 transition-all duration-200 hover:scale-105 hover:shadow-xl"
-          >
-            Start Creating
-            <svg
-              className="ml-3 w-6 h-6"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              xmlns="http://www.w3.org/2000/svg"
+          {isAuthenticated ? (
+            <Link
+              to="/upload"
+              className="inline-flex items-center px-8 py-4 text-xl font-medium rounded-lg shadow-lg text-white bg-indigo-600/90 hover:bg-indigo-700 transition-all duration-200 hover:scale-105 hover:shadow-xl"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M13 7l5 5m0 0l-5 5m5-5H6"
-              />
-            </svg>
-          </Link>
+              Start Creating
+              <svg
+                className="ml-3 w-6 h-6"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 7l5 5m0 0l-5 5m5-5H6"
+                />
+              </svg>
+            </Link>
+          ) : (
+            <Link
+              to="/login"
+              className="inline-flex items-center px-8 py-4 text-xl font-medium rounded-lg shadow-lg text-white bg-indigo-600/90 hover:bg-indigo-700 transition-all duration-200 hover:scale-105 hover:shadow-xl"
+            >
+              Login / Sign Up
+              <svg
+                className="ml-3 w-6 h-6"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"
+                />
+              </svg>
+            </Link>
+          )}
         </div>
       </div>
     </div>

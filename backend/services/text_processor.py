@@ -13,6 +13,27 @@ from flask import jsonify
 
 load_dotenv()
 
+def _is_trivial_short_text(text: str) -> bool:
+    """Heuristic: treat very short inputs as trivial to avoid over-generation."""
+    if not text:
+        return True
+    stripped = text.strip()
+    if len(stripped) <= 60:
+        return True
+    words = stripped.split()
+    return len(words) <= 12
+
+def _create_minimal_script_from_text(text: str) -> str:
+    """Return a single grounded line with no invented content."""
+    content = text.strip()
+    if not content:
+        return "NARRATOR: "
+    # Capitalize first letter if needed and ensure terminal punctuation
+    normalized = content[0].upper() + content[1:] if content else content
+    if normalized[-1] not in ".!?":
+        normalized += "."
+    return f"NARRATOR: {normalized}"
+
 def get_client():
     api_key = os.getenv("QWEN_API_KEY")
     if not api_key:
@@ -73,8 +94,35 @@ class TextProcessor:
         """
         Process the text through all expert roles and generate a simplified version using Qwen.
         """
+        # Short-input minimal mode to avoid making things up
+        if _is_trivial_short_text(text):
+            simplified_text = _create_minimal_script_from_text(text)
+            characters = self.extract_characters(simplified_text)
+            return {
+                "status": "success",
+                "analysis": {"mode": "minimal_short_input"},
+                "simplified_text": simplified_text,
+                "characters": characters,
+                "target_age_group": target_age_group
+            }
+
         results = {}
         analysis_steps = []
+
+        # Check if API key is available
+        api_key = os.getenv("QWEN_API_KEY")
+        if not api_key:
+            # Fallback: Create a simple simplified version without AI processing
+            print("QWEN_API_KEY not found. Using fallback processing.")
+            simplified_text = self._create_fallback_simplified_text(text, target_age_group)
+            characters = self.extract_characters(simplified_text)
+            return {
+                "status": "success",
+                "analysis": {"fallback": "AI service not available - using basic processing"},
+                "simplified_text": simplified_text,
+                "characters": characters,
+                "target_age_group": target_age_group
+            }
 
         # Step 1: Initial analysis by all experts
         for role_id, role_info in tqdm(self.expert_roles.items(), desc="Expert Analysis"):
@@ -104,6 +152,7 @@ class TextProcessor:
                     progress_callback(step)
             except Exception as e:
                 print(f"Error in {role_id} analysis: {str(e)}")
+                # Continue with fallback for this role
                 results[role_id] = f"Error: {str(e)}"
                 step = {
                     "role": role_info['role'],
@@ -114,9 +163,9 @@ class TextProcessor:
                     progress_callback(step)
 
         # Step 2: Generate simplified version with character dialogue
-        simplification_system_prompt = f"""Based on the expert analyses, create a simplified version of the text that is appropriate for children aged {target_age_group}.\n\nCreate a simplified version that:\n1. Maintains the original story and message\n2. Uses age-appropriate language\n3. Includes clear dialogue attribution for all characters\n4. Is engaging and easy to follow\n5. Preserves key themes and lessons\n\nFormat the output with clear speaker attributions (e.g., \"NARRATOR:\", \"CHARACTER_NAME:\") and include:\n- A narrator for descriptive passages\n- Distinct character voices for dialogue\n- Clear scene transitions\n- Emotional expressions and reactions\n- Age-appropriate descriptions\n\nExpert Analyses:\n{json.dumps(analysis_steps, indent=2)}"""
-
         try:
+            simplification_system_prompt = f"""Based on the expert analyses, create a simplified version of the text that is appropriate for children aged {target_age_group}.\n\nCreate a simplified version that:\n1. Maintains the original story and message\n2. Uses age-appropriate language\n3. Includes clear speaker attributions like \"NARRATOR:\" and \"CHARACTER_NAME:\"\n4. Is engaging and easy to follow\n5. Preserves key themes and lessons\n\nStrict grounding constraints:\n- Do NOT invent story elements, characters, scenes, or facts that are not present in the input text.\n- Keep output length roughly proportional to the input length. For short inputs (≈1–2 sentences), produce at most 1–2 lines.\n- If the input is extremely short or generic, return a single grounded line (e.g., 'NARRATOR: <original>') with minimal formatting.\n\nElevenLabs tag rules:\n- Use ONLY these voice tags inline (square brackets), when contextually appropriate:\n  [happy], [sad], [excited], [angry], [whisper], [annoyed], [appalled], [thoughtful], [surprised],\n  [laughing], [chuckles], [sighs], [clears throat], [short pause], [long pause], [exhales sharply], [inhales deeply],\n  and common variants like [whispers], [laughs], [crying], [sarcastic], [curious].\n- Do NOT use any environmental SFX or non-voice actions (e.g., [applause], [explosion], [music], [footsteps]). Voice-only.\n- Use tags sparingly (no more than 1–2 per sentence) and only when they enhance the line.\n- Punctuation shapes delivery: ellipses (…) add pauses; capitalization adds emphasis; standard punctuation drives rhythm.\n\nExpert Analyses:\n{json.dumps(analysis_steps, indent=2)}"""
+
             response_json = self._make_api_request(
                 model="qwen-plus",
                 messages=[
@@ -126,21 +175,21 @@ class TextProcessor:
             )
             simplified_text = response_json["choices"][0]["message"]["content"]
             results['simplified_text'] = simplified_text
-            # Extract character information
-            characters = self.extract_characters(simplified_text)
-            return {
-                "status": "success",
-                "analysis": results,
-                "simplified_text": simplified_text,
-                "characters": characters,
-                "target_age_group": target_age_group
-            }
         except Exception as e:
-            return {
-                "status": "error",
-                "message": f"Error in simplification: {str(e)}",
-                "analysis": results
-            }
+            print(f"Error in AI simplification: {str(e)}. Using fallback processing.")
+            # Use fallback if AI simplification fails
+            simplified_text = self._create_fallback_simplified_text(text, target_age_group)
+            results['simplified_text'] = simplified_text
+        
+        # Extract character information
+        characters = self.extract_characters(simplified_text)
+        return {
+            "status": "success",
+            "analysis": results,
+            "simplified_text": simplified_text,
+            "characters": characters,
+            "target_age_group": target_age_group
+        }
 
     def extract_characters(self, simplified_text: str) -> List[Dict]:
         """
@@ -164,6 +213,65 @@ class TextProcessor:
                     else:
                         characters[character]["dialogue_count"] += 1
         return list(characters.values())
+
+    def _create_fallback_simplified_text(self, text: str, target_age_group: str) -> str:
+        """
+        Create a simplified version of the text without AI processing.
+        """
+        # Basic text processing
+        lines = text.split('\n')
+        simplified_lines = []
+        
+        # Add narrator introduction
+        simplified_lines.append("NARRATOR: Once upon a time, there was a story to tell.")
+        
+        # Process each paragraph
+        for line in lines:
+            line = line.strip()
+            if line:
+                # Simple sentence splitting and simplification
+                sentences = re.split(r'[.!?]+', line)
+                for sentence in sentences:
+                    sentence = sentence.strip()
+                    if sentence and len(sentence) > 10:
+                        # Basic simplification: shorter sentences, simpler words
+                        simplified_sentence = self._simplify_sentence(sentence)
+                        simplified_lines.append(f"NARRATOR: {simplified_sentence}")
+        
+        # Add conclusion
+        simplified_lines.append("NARRATOR: And that's the end of our story.")
+        
+        return '\n'.join(simplified_lines)
+    
+    def _simplify_sentence(self, sentence: str) -> str:
+        """
+        Basic sentence simplification.
+        """
+        # Remove extra whitespace
+        sentence = re.sub(r'\s+', ' ', sentence)
+        
+        # Basic word replacement for common complex words
+        replacements = {
+            'subsequently': 'then',
+            'nevertheless': 'but',
+            'furthermore': 'also',
+            'consequently': 'so',
+            'approximately': 'about',
+            'demonstrate': 'show',
+            'utilize': 'use',
+            'implement': 'use',
+            'facilitate': 'help',
+            'comprehensive': 'complete'
+        }
+        
+        for complex_word, simple_word in replacements.items():
+            sentence = re.sub(r'\b' + complex_word + r'\b', simple_word, sentence, flags=re.IGNORECASE)
+        
+        # Ensure sentence ends with punctuation
+        if sentence and not sentence[-1] in '.!?':
+            sentence += '.'
+        
+        return sentence
 
     def _make_api_request(self, model: str, messages: List[Dict[str, str]]) -> Dict:
         """

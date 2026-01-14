@@ -20,5 +20,7 @@ def extract_text_from_pdf(file_path: Path) -> str:
     with open(file_path, 'rb') as pdf_file:
         pdf_reader = PdfReader(pdf_file)
         for page in pdf_reader.pages:
-            text += page.extract_text()
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text
     return text
