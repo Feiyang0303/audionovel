@@ -59,7 +59,11 @@ class UserModel:
         """Verify user password"""
         if 'password_hash' not in user:
             return False
-        return bcrypt.checkpw(password.encode('utf-8'), user['password_hash'])
+        stored = user['password_hash']
+        # PyMongo may return bson.Binary; bcrypt requires bytes
+        if not isinstance(stored, (bytes, bytearray)):
+            stored = bytes(stored)
+        return bcrypt.checkpw(password.encode('utf-8'), stored)
     
     def update_user(self, user_id: str, update_data: Dict[str, Any]):
         """Update user data"""

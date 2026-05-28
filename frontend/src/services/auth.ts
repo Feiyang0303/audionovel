@@ -41,13 +41,12 @@ export interface ChangePasswordData {
   new_password: string
 }
 
-// Create axios instance with auth interceptor
-const authApi = axios.create({
-  baseURL: `${API_BASE_URL}/auth`,
+/** Shared client for REST API (Bearer token when present). */
+export const api = axios.create({
+  baseURL: API_BASE_URL,
 })
 
-// Add auth token to requests if available
-authApi.interceptors.request.use((config) => {
+api.interceptors.request.use((config) => {
   const token = localStorage.getItem('authToken')
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
@@ -55,70 +54,79 @@ authApi.interceptors.request.use((config) => {
   return config
 })
 
-// Handle token expiration
-authApi.interceptors.response.use(
+// Do not redirect on failed login / register / token validation
+api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('authToken')
-      localStorage.removeItem('user')
-      window.location.href = '/login'
+      const url = error.config?.url ?? ''
+      const method = (error.config?.method || '').toLowerCase()
+      const isPublicAuth =
+        url.includes('/api/auth/sessions') ||
+        url.includes('/api/auth/token/validation') ||
+        (method === 'post' && (url === '/api/users' || url.endsWith('/api/users')))
+      if (!isPublicAuth) {
+        localStorage.removeItem('authToken')
+        localStorage.removeItem('user')
+        window.location.href = '/login'
+      }
     }
     return Promise.reject(error)
   }
 )
 
-// Auth functions
 export const register = async (data: RegisterData): Promise<AuthResponse> => {
-  const response = await authApi.post<AuthResponse>('/register', data)
-  
-  // Store token and user data
+  const response = await api.post<AuthResponse>('/api/users', data)
   localStorage.setItem('authToken', response.data.token)
   localStorage.setItem('user', JSON.stringify(response.data.user))
-  
   return response.data
 }
 
 export const login = async (data: LoginData): Promise<AuthResponse> => {
-  const response = await authApi.post<AuthResponse>('/login', data)
-  
-  // Store token and user data
+  const response = await api.post<AuthResponse>('/api/auth/sessions', data)
   localStorage.setItem('authToken', response.data.token)
   localStorage.setItem('user', JSON.stringify(response.data.user))
-  
   return response.data
 }
 
-export const logout = (): void => {
+export const logout = async (): Promise<void> => {
+  try {
+    await api.delete('/api/auth/sessions')
+  } catch {
+    /* ignore network errors — still clear client */
+  }
   localStorage.removeItem('authToken')
   localStorage.removeItem('user')
 }
 
-export const getProfile = async (): Promise<{ user: User; library_stats: any }> => {
-  const response = await authApi.get('/profile')
+export const getProfile = async (): Promise<{ user: User; library_stats: unknown }> => {
+  const response = await api.get('/api/users/me')
   return response.data
 }
 
-export const updateProfile = async (data: ProfileUpdateData): Promise<{ message: string; user: User }> => {
-  const response = await authApi.put('/profile', data)
-  
-  // Update stored user data
+/** Updates profile; also call `syncSessionUser(user)` from AuthContext so UI state matches. */
+export const updateProfile = async (
+  data: ProfileUpdateData
+): Promise<{ message: string; user: User }> => {
+  const response = await api.patch('/api/users/me', data)
   localStorage.setItem('user', JSON.stringify(response.data.user))
-  
   return response.data
 }
 
-export const changePassword = async (data: ChangePasswordData): Promise<{ message: string }> => {
-  const response = await authApi.post('/change-password', data)
+export const changePassword = async (
+  data: ChangePasswordData
+): Promise<{ message: string }> => {
+  const response = await api.patch('/api/users/me/password', data)
   return response.data
 }
 
-export const verifyToken = async (token: string): Promise<{ valid: boolean; user: User }> => {
-  const response = await authApi.post('/verify-token', { token })
+export const verifyToken = async (
+  token: string
+): Promise<{ valid: boolean; user: User }> => {
+  const response = await api.post('/api/auth/token/validation', { token })
   return response.data
 }
 
-// Utility functions
 export const getCurrentUser = (): User | null => {
   const userStr = localStorage.getItem('user')
   return userStr ? JSON.parse(userStr) : null
@@ -132,30 +140,5 @@ export const isAuthenticated = (): boolean => {
   return !!getAuthToken()
 }
 
-// Create authenticated API instance
-export const createAuthenticatedApi = () => {
-  const api = axios.create({
-    baseURL: API_BASE_URL,
-  })
-
-  api.interceptors.request.use((config) => {
-    const token = getAuthToken()
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
-    return config
-  })
-
-  api.interceptors.response.use(
-    (response) => response,
-    (error) => {
-      if (error.response?.status === 401) {
-        logout()
-        window.location.href = '/login'
-      }
-      return Promise.reject(error)
-    }
-  )
-
-  return api
-} 
+/** @deprecated Use `api` from this module instead */
+export const createAuthenticatedApi = () => api

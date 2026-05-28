@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { register as registerService } from '../services/auth'
-import { useAuth } from '../App'
+import { useAuth } from '../contexts/AuthContext'
 import { useNavigate, Link } from 'react-router-dom'
 
 export function Register() {
   const [formData, setFormData] = useState({
     username: '',
+    displayName: '',
     email: '',
     password: '',
     confirmPassword: ''
@@ -39,11 +40,14 @@ export function Register() {
     setLoading(true)
 
     try {
+      const username = formData.username.trim()
+      const email = formData.email.trim()
+      const displayName = formData.displayName.trim()
       const response = await registerService({
-        username: formData.username,
-        email: formData.email,
+        username,
+        email,
         password: formData.password,
-        name: formData.username
+        name: displayName || username,
       })
       login(response.user, response.token)
       navigate('/profile')
@@ -85,6 +89,22 @@ export function Register() {
                 className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                 placeholder="Username"
                 value={formData.username}
+                onChange={handleChange}
+              />
+            </div>
+
+            <div>
+              <label htmlFor="displayName" className="block text-sm font-medium text-gray-700">
+                Display name <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <input
+                id="displayName"
+                name="displayName"
+                type="text"
+                autoComplete="name"
+                className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                placeholder="Shown on your profile (defaults to username)"
+                value={formData.displayName}
                 onChange={handleChange}
               />
             </div>

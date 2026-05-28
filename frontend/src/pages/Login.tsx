@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { login as loginService } from '../services/auth'
-import { useAuth } from '../App'
+import { useAuth } from '../contexts/AuthContext'
 import { useNavigate, Link } from 'react-router-dom'
 
 export function Login() {
@@ -17,7 +17,7 @@ export function Login() {
     setLoading(true)
 
     try {
-      const response = await loginService({ email, password })
+      const response = await loginService({ email: email.trim(), password })
       login(response.user, response.token)
       navigate('/profile')
     } catch (err: any) {

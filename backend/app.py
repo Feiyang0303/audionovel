@@ -1,10 +1,16 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 import os
 from pathlib import Path
 from dotenv import load_dotenv
 from services.text_processor import TextProcessor
-from services.dialogue_generator import generate_dialogue_audio
+from services.dialogue_generator import (
+    default_voice_id_from_env,
+    generate_dialogue_audio,
+    generate_script_audio,
+    get_elevenlabs_api_key,
+    get_elevenlabs_client,
+)
 from services.cohere_embeddings import generate_embedding, search_similar
 from services.audio_tag_enhancer import enhance_dialogue_with_audio_tags
 from utils import save_uploaded_file, extract_text_from_pdf
@@ -17,7 +23,7 @@ import time
 from models.database import init_db, get_file_model, get_processing_model, get_user_model, get_library_model
 
 # Import authentication and library routes
-from routes.auth import auth_bp
+from routes.auth import auth_api_bp, users_bp
 from routes.library import library_bp
 
 # Load environment variables from .env file
@@ -34,7 +40,7 @@ CORS(app, resources={
             "http://127.0.0.1:5173",
             "http://127.0.0.1:5174",
         ],
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"]
     }
 })
@@ -58,9 +64,10 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB limit
 # Initialize MongoDB
 init_db()
 
-# Register blueprints
-app.register_blueprint(auth_bp, url_prefix='/auth')
-app.register_blueprint(library_bp, url_prefix='/api')
+# Register blueprints (REST: /api/auth/*, /api/users/*, /api/library/*)
+app.register_blueprint(auth_api_bp, url_prefix="/api/auth")
+app.register_blueprint(users_bp, url_prefix="/api/users")
+app.register_blueprint(library_bp, url_prefix="/api")
 
 def allowed_file(filename):
     return '.' in filename and \
@@ -69,6 +76,41 @@ def allowed_file(filename):
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({"status": "healthy", "message": "Service is running"})
+
+
+@app.route('/openapi.yaml', methods=['GET'])
+def openapi_spec():
+    """OpenAPI 3 contract for REST endpoints."""
+    spec_path = Path(__file__).resolve().parent / 'openapi.yaml'
+    return send_file(spec_path, mimetype='application/yaml')
+
+
+@app.route('/docs', methods=['GET'])
+def swagger_ui():
+    """Swagger UI (loads /openapi.yaml)."""
+    return (
+        """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>AudioNovel API</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"/>
+</head>
+<body>
+<div id="swagger-ui"></div>
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js" crossorigin></script>
+<script>
+  window.ui = SwaggerUIBundle({
+    url: '/openapi.yaml',
+    dom_id: '#swagger-ui',
+    presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+  });
+</script>
+</body>
+</html>""",
+        200,
+        {'Content-Type': 'text/html; charset=utf-8'},
+    )
 
 @app.route('/process', methods=['POST'])
 def process_text():
@@ -109,7 +151,7 @@ def get_status(filename):
             return jsonify({
                 "status": "uploaded",
                 "message": "File uploaded, processing not started yet.",
-                "file_id": uploaded_file['_id']
+                "file_id": str(uploaded_file['_id']),
             })
         
         # Build response with processing steps
@@ -119,16 +161,16 @@ def get_status(filename):
             "status": processing_result['status'],
             "processing_steps": processing_steps,
             "processing_date": processing_result['processing_date'].isoformat() if processing_result.get('processing_date') else None,
-            "file_id": uploaded_file['_id']
+            "file_id": str(uploaded_file['_id']),
         }
         
-        # Add analysis data if completed
-        if processing_result['status'] == 'completed' and processing_result.get('simplified_text'):
+        # Add analysis data if completed (include partial payload so clients can save to library)
+        if processing_result['status'] == 'completed':
             response["analysis"] = {
-                "simplified_text": processing_result['simplified_text'],
+                "simplified_text": processing_result.get('simplified_text') or '',
                 "characters": processing_result.get('characters', []),
                 "expert_analyses": processing_result.get('expert_analyses', {}),
-                "target_age_group": uploaded_file.get('target_age_group', '8-12')
+                "target_age_group": uploaded_file.get('target_age_group', '8-12'),
             }
         
         return jsonify(response)
@@ -543,25 +585,11 @@ def semantic_search():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/save-to-library', methods=['POST'])
-def save_to_library():
-    """Save a processed file to user's library"""
-    try:
-        from middleware.auth import require_auth
-        from routes.library import add_to_library
-        
-        # This will be handled by the library blueprint
-        return add_to_library()
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
 @app.route('/dialogue/convert', methods=['POST'])
 def dialogue_convert():
-    """Convert text inputs to dialogue audio using ElevenLabs.
+    """Convert text inputs to dialogue audio using ElevenLabs (one TTS call per item, MP3).
 
-    Expects JSON body: { "inputs": [ {"text": str, "voice_id": str}, ... ] }
-    Returns saved audio filename and URL.
+    JSON body: { "inputs": [ {"text": str, "voice_id": str}, ... ], "model_id": optional str }
     """
     try:
         data = request.get_json(silent=True) or {}
@@ -569,14 +597,109 @@ def dialogue_convert():
         if not inputs or not isinstance(inputs, list):
             return jsonify({"error": "'inputs' must be a non-empty list of {text, voice_id}"}), 400
 
-        filename = generate_dialogue_audio(inputs)
+        model_id = data.get('model_id')
+        if model_id is not None and not isinstance(model_id, str):
+            return jsonify({"error": "model_id must be a string when provided"}), 400
+
+        filename = generate_dialogue_audio(inputs, model_id=model_id or None)
         return jsonify({
             "message": "Dialogue audio generated",
             "audio_file": filename,
             "url": f"/audio/{filename}"
         })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/audio/generate-from-script', methods=['POST'])
+def audio_generate_from_script():
+    """Generate MP3 from a script with per-character voices and optional emotion tags.
+
+    JSON body:
+      script: str (lines like "ALICE: Hello" / "NARRATOR: ...")
+      voice_map: object mapping speaker name -> ElevenLabs voice_id
+      default_voice_id: str (used for speakers not in voice_map)
+      model_id: optional str (defaults to ELEVENLABS_MODEL_ID or eleven_multilingual_v2)
+      enhance_emotion: optional bool — insert [happy], [whisper], etc. via Qwen (needs QWEN_API_KEY)
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        script = data.get('script', '')
+        voice_map = data.get('voice_map')
+        default_voice_id = (data.get('default_voice_id') or '')
+        if not isinstance(default_voice_id, str):
+            return jsonify({"error": "default_voice_id must be a string"}), 400
+        default_voice_id = default_voice_id.strip() or default_voice_id_from_env()
+        model_id = data.get('model_id')
+        enhance_emotion = bool(data.get('enhance_emotion', False))
+
+        if not isinstance(script, str):
+            return jsonify({"error": "script must be a string"}), 400
+        if not isinstance(voice_map, dict):
+            return jsonify({"error": "voice_map must be an object"}), 400
+        if not default_voice_id:
+            return jsonify({
+                "error": "default_voice_id is required, or set ELEVENLABS_DEFAULT_VOICE_ID in the server environment",
+            }), 400
+        if model_id is not None and not isinstance(model_id, str):
+            return jsonify({"error": "model_id must be a string when provided"}), 400
+
+        filename = generate_script_audio(
+            script,
+            voice_map,
+            default_voice_id,
+            model_id=model_id or None,
+            enhance_emotion=enhance_emotion,
+        )
+        return jsonify({
+            "message": "Script audio generated",
+            "audio_file": filename,
+            "url": f"/audio/{filename}",
+        })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/audio/voices', methods=['GET'])
+def audio_list_voices():
+    """List ElevenLabs voices for the configured API key (voice_id + name for UI mapping)."""
+    from elevenlabs.core.api_error import ApiError  # type: ignore
+
+    if not get_elevenlabs_api_key():
+        return jsonify({"error": "ElevenLabs API key not configured"}), 503
+    try:
+        client = get_elevenlabs_client()
+        if not client:
+            return jsonify({"error": "ElevenLabs client could not be created"}), 503
+        resp = client.voices.get_all(show_legacy=True)
+        voices = [
+            {"voice_id": v.voice_id, "name": v.name}
+            for v in resp.voices
+        ]
+        return jsonify({"voices": voices})
+    except ApiError as e:
+        body = e.body if isinstance(e.body, dict) else {}
+        detail = body.get("detail") if isinstance(body.get("detail"), dict) else {}
+        msg = detail.get("message") or str(e)
+        voices = []
+        hint = default_voice_id_from_env()
+        if hint:
+            voices.append({"voice_id": hint, "name": "(from ELEVENLABS_DEFAULT_VOICE_ID)"})
+        return jsonify({
+            "voices": voices,
+            "warning": msg,
+            "hint": "Enable the voices_read permission on your API key, or copy a voice ID from the ElevenLabs web app and set ELEVENLABS_DEFAULT_VOICE_ID.",
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
 
 @app.route('/dialogue/enhance', methods=['POST'])
 def dialogue_enhance():

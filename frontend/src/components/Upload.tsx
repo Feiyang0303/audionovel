@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import axios from 'axios'
 import { uploadBook, getStatus } from '../services/api'
 import { addToLibrary } from '../services/library'
-import { useAuth } from '../App'
+import { useAuth } from '../contexts/AuthContext'
 import type { UploadResponse } from '../services/api'
 
 const PROCESSING_STAGES = [
@@ -31,6 +32,7 @@ export function Upload() {
   const [savedToLibrary, setSavedToLibrary] = useState(false)
   const [currentFilename, setCurrentFilename] = useState<string | null>(null)
   const [currentFileId, setCurrentFileId] = useState<string | null>(null)
+  const [processingComplete, setProcessingComplete] = useState(false)
   const navigate = useNavigate()
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -59,22 +61,32 @@ export function Upload() {
         const progress = totalSteps > 0 ? 5 + Math.round((completedSteps / totalSteps) * 95) : 100
         setUploadProgress(progress)
         setCurrentStage(lastCompletedRole ? `Completed: ${lastCompletedRole}` : 'Processing...')
+        if (status.file_id != null && status.file_id !== '') {
+          setCurrentFileId(String(status.file_id))
+        }
+
         if (status.status === 'completed') {
-          // Stop polling
           if (pollingRef.current) clearInterval(pollingRef.current)
           setUploadProgress(100)
           setCurrentStage('Processing complete!')
-          setAnalysis(status.analysis)
+          setProcessingComplete(true)
           setCurrentFilename(filename)
-          if (status.file_id) {
-            setCurrentFileId(status.file_id)
+          if (status.analysis) {
+            setAnalysis(status.analysis)
+            const text = status.analysis.simplified_text
+            if (text) setLivePreview(text)
           }
-          // navigate(`/book/${filename}`, { state: { analysis: status.analysis } })
         }
-        if (!currentFileId && status.file_id) {
-          setCurrentFileId(status.file_id)
+        if (status.status === 'error') {
+          if (pollingRef.current) clearInterval(pollingRef.current)
+          setCurrentStage('Processing failed')
+          setError(
+            typeof status.message === 'string'
+              ? status.message
+              : 'Processing failed — you can try uploading again.'
+          )
         }
-        if (status.analysis && status.analysis.simplified_text) {
+        if (status.analysis?.simplified_text) {
           setLivePreview(status.analysis.simplified_text)
         }
       }
@@ -124,6 +136,11 @@ export function Upload() {
     setUploadProgress(0)
     setError(null)
     setAnalysis(null)
+    setLivePreview(null)
+    setProcessingComplete(false)
+    setCurrentFileId(null)
+    setCurrentFilename(null)
+    setSavedToLibrary(false)
     setCurrentStage('Starting upload...')
 
     try {
@@ -141,14 +158,24 @@ export function Upload() {
     }
   }
 
+  const previewSnippet =
+    analysis?.simplified_text?.trim() ||
+    livePreview?.trim() ||
+    ''
+
   const handleSaveToLibrary = async () => {
     if (!isAuthenticated) {
-      setError('Please login to save to library')
+      setError('Please log in to save results to your profile library')
       return
     }
 
-    if (!analysis || !currentFileId) {
-      setError('No processed content to save (missing file id)')
+    if (!currentFileId) {
+      setError('Missing file id — wait until processing finishes, then try again.')
+      return
+    }
+
+    if (!processingComplete) {
+      setError('Processing is not finished yet.')
       return
     }
 
@@ -156,16 +183,33 @@ export function Upload() {
     setError(null)
 
     try {
+      const desc =
+        previewSnippet.length > 0
+          ? `AudioNovel processed script — ${previewSnippet.slice(0, 280)}${previewSnippet.length > 280 ? '…' : ''}`
+          : 'Saved from AudioNovel upload (processing complete).'
+
       await addToLibrary({
-        file_id: currentFileId,
-        title: file?.name || 'Untitled Book',
-        description: 'Processed with AudioNovel - Simplified text available'
+        file_id: String(currentFileId),
+        title: file?.name?.replace(/\.[^/.]+$/, '') || currentFilename || 'My book',
+        description: desc,
+        tags: ['upload', 'processed'],
       })
-      
+
       setSavedToLibrary(true)
-      setTimeout(() => setSavedToLibrary(false), 3000) // Reset after 3 seconds
+      setTimeout(() => setSavedToLibrary(false), 5000)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save to library')
+      if (axios.isAxiosError(err)) {
+        const msg =
+          (err.response?.data as { error?: string })?.error ||
+          err.message
+        setError(
+          err.response?.status === 409
+            ? 'This book is already in your library — open Profile to view it.'
+            : msg || 'Failed to save to library'
+        )
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to save to library')
+      }
     } finally {
       setIsSavingToLibrary(false)
     }
@@ -272,57 +316,76 @@ export function Upload() {
             </div>
           </div>
 
-          {/* Script Preview Box */}
-          {analysis && analysis.simplified_text ? (
-            <div className="mt-8 p-4 bg-gray-50 rounded-lg">
-              <div className="flex justify-between items-center mb-4">
-                <h4 className="text-lg font-medium text-gray-900">Script Preview</h4>
-                {isAuthenticated && (
+          {/* Save results to profile (library) — same data as Profile → My Library */}
+          {processingComplete && currentFileId && (
+            <div className="mt-8 p-4 border-2 border-indigo-200 bg-indigo-50/80 rounded-lg">
+              <h4 className="text-lg font-semibold text-gray-900">Save to your profile</h4>
+              <p className="mt-1 text-sm text-gray-600">
+                Add this processed book to <strong>Profile → My Library</strong> so you can open it anytime.
+              </p>
+              {isAuthenticated ? (
+                <div className="mt-4 flex flex-wrap items-center gap-3">
                   <button
+                    type="button"
                     onClick={handleSaveToLibrary}
                     disabled={isSavingToLibrary || savedToLibrary}
                     className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-md shadow-sm text-white 
                       ${isSavingToLibrary || savedToLibrary
-                        ? 'bg-green-400 cursor-not-allowed' 
+                        ? 'bg-green-500 cursor-not-allowed'
                         : 'bg-green-600 hover:bg-green-700'}`}
                   >
-                    {isSavingToLibrary ? 'Saving...' : savedToLibrary ? 'Saved!' : 'Save to Library'}
+                    {isSavingToLibrary
+                      ? 'Saving…'
+                      : savedToLibrary
+                        ? 'Saved to library'
+                        : 'Save to my library'}
                   </button>
-                )}
-              </div>
-              <div className="prose max-w-none">
-                <div className="text-gray-600 whitespace-pre-wrap">
-                  {analysis.simplified_text}
-                </div>
-              </div>
-              {!isAuthenticated && (
-                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
-                  <p className="text-sm text-blue-700">
-                    💡 <strong>Want to save this to your library?</strong> Please{' '}
-                    <button 
-                      onClick={() => navigate('/login')}
-                      className="text-blue-600 hover:text-blue-800 underline font-medium"
+                  {savedToLibrary && (
+                    <Link
+                      to="/profile"
+                      className="text-sm font-medium text-indigo-600 hover:text-indigo-800 underline"
                     >
-                      login
+                      View in Profile
+                    </Link>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-4 p-3 bg-white border border-indigo-100 rounded-md">
+                  <p className="text-sm text-gray-700">
+                    <strong>Log in</strong> to save this result to your library.{' '}
+                    <button
+                      type="button"
+                      onClick={() => navigate('/login')}
+                      className="text-indigo-600 hover:text-indigo-800 underline font-medium"
+                    >
+                      Log in
                     </button>{' '}
                     or{' '}
-                    <button 
+                    <button
+                      type="button"
                       onClick={() => navigate('/register')}
-                      className="text-blue-600 hover:text-blue-800 underline font-medium"
+                      className="text-indigo-600 hover:text-indigo-800 underline font-medium"
                     >
-                      sign up
-                    </button>{' '}
-                    to save your processed books.
+                      Create account
+                    </button>
+                    .
                   </p>
                 </div>
               )}
             </div>
-          ) : livePreview ? (
+          )}
+
+          {/* Script Preview Box */}
+          {(livePreview || analysis?.simplified_text) ? (
             <div className="mt-8 p-4 bg-gray-50 rounded-lg">
-              <h4 className="text-lg font-medium text-gray-900 mb-4">Script Preview (Live)</h4>
+              <div className="flex justify-between items-center mb-4">
+                <h4 className="text-lg font-medium text-gray-900">
+                  {processingComplete ? 'Script preview' : 'Script preview (live)'}
+                </h4>
+              </div>
               <div className="prose max-w-none">
                 <div className="text-gray-600 whitespace-pre-wrap">
-                  {livePreview}
+                  {livePreview || analysis?.simplified_text || ''}
                 </div>
               </div>
             </div>

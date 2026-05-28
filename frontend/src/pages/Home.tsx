@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { useAuth } from '../App'
+import { useAuth } from '../contexts/AuthContext'
 
 export function Home() {
   const { isAuthenticated } = useAuth()

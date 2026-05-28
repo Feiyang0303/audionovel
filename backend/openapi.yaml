@@ -1,0 +1,348 @@
+openapi: 3.0.3
+info:
+  title: AudioNovel API
+  description: REST API for uploads, processing, auth, and user library.
+  version: 1.0.0
+servers:
+  - url: http://127.0.0.1:5001
+    description: Local development
+
+tags:
+  - name: Auth
+    description: Sessions (JWT)
+  - name: Users
+    description: Registration and current user
+  - name: Library
+    description: User library items
+  - name: Health
+    description: Service health
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    AuthResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        token:
+          type: string
+        user:
+          type: object
+          additionalProperties: true
+    RegisterRequest:
+      type: object
+      required: [username, email, password]
+      properties:
+        username:
+          type: string
+        email:
+          type: string
+        password:
+          type: string
+        name:
+          type: string
+        profile_pic:
+          type: string
+    UserProfileResponse:
+      type: object
+      properties:
+        user:
+          type: object
+          additionalProperties: true
+        library_stats:
+          type: object
+          additionalProperties: true
+    PatchUserRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        profile_pic:
+          type: string
+    PatchPasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+        new_password:
+          type: string
+    LibraryItemCreate:
+      type: object
+      required: [file_id]
+      properties:
+        file_id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        is_favorite:
+          type: boolean
+    LibraryItemPatch:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        is_favorite:
+          type: boolean
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+
+  /api/auth/sessions:
+    post:
+      tags: [Auth]
+      summary: Create session (login)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: JWT issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [Auth]
+      summary: Destroy session (logout)
+      description: Stateless JWT — client discards token; server returns 204.
+      responses:
+        '204':
+          description: No content
+
+  /api/auth/token/validation:
+    post:
+      tags: [Auth]
+      summary: Validate JWT from body
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        '200':
+          description: Token valid
+        '401':
+          description: Invalid or expired
+
+  /api/users:
+    post:
+      tags: [Users]
+      summary: Register user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '409':
+          description: Email or username taken
+
+  /api/users/me:
+    get:
+      tags: [Users]
+      summary: Current user and library stats
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileResponse'
+        '401':
+          description: Unauthorized
+    patch:
+      tags: [Users]
+      summary: Update profile
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchUserRequest'
+      responses:
+        '200':
+          description: Updated
+
+  /api/users/me/password:
+    patch:
+      tags: [Users]
+      summary: Change password
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchPasswordRequest'
+      responses:
+        '200':
+          description: Password changed
+        '401':
+          description: Wrong current password
+
+  /api/library/items:
+    get:
+      tags: [Library]
+      summary: List library items
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: q
+          schema:
+            type: string
+          description: Search title, description, filename
+        - in: query
+          name: is_favorite
+          schema:
+            type: string
+            enum: ['true', 'false', '1', '0', 'yes', 'no']
+          description: Filter favorites
+      responses:
+        '200':
+          description: Items array
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                  count:
+                    type: integer
+    post:
+      tags: [Library]
+      summary: Add item to library
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LibraryItemCreate'
+      responses:
+        '201':
+          description: Created
+
+  /api/library/items/{itemId}:
+    parameters:
+      - in: path
+        name: itemId
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Library]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Single item
+        '404':
+          description: Not found
+    patch:
+      tags: [Library]
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LibraryItemPatch'
+      responses:
+        '200':
+          description: Updated item
+    put:
+      tags: [Library]
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LibraryItemPatch'
+      responses:
+        '200':
+          description: Updated item
+    delete:
+      tags: [Library]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Removed
+
+  /api/library/statistics:
+    get:
+      tags: [Library]
+      summary: Library counts
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Stats object

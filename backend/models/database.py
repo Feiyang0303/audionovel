@@ -4,34 +4,52 @@ import os
 from typing import Dict, List, Any, Optional
 from bson import ObjectId
 
+_MONGO_KWARGS = {"serverSelectionTimeoutMS": 5000}
+
+
 class MongoDB:
     def __init__(self, connection_string: str = None):
         """Initialize MongoDB connection"""
+        self.available = False
         if connection_string:
-            self.client = MongoClient(connection_string)
+            self.client = MongoClient(connection_string, **_MONGO_KWARGS)
         else:
-            # Try to get connection string from environment variable
             mongodb_uri = os.getenv('MONGODB_URI')
             if mongodb_uri:
-                self.client = MongoClient(mongodb_uri)
+                self.client = MongoClient(mongodb_uri, **_MONGO_KWARGS)
             else:
-                # Default to local MongoDB
                 print("Warning: No MONGODB_URI found in environment. Using local MongoDB.")
-                self.client = MongoClient('mongodb://localhost:27017/')
-        
+                self.client = MongoClient('mongodb://localhost:27017/', **_MONGO_KWARGS)
+
         self.db = self.client['audionovel']
-        
-        # Test the connection
+
         try:
             self.client.admin.command('ping')
             print("MongoDB connection successful!")
+            self.available = True
         except Exception as e:
             print(f"MongoDB connection failed: {e}")
-            print("Please check your MongoDB setup and connection string.")
-        
+
     def close(self):
         """Close the database connection"""
         self.client.close()
+
+
+def _switch_to_mongomock(db_holder: MongoDB) -> None:
+    """Replace client with an in-memory DB so the API can run without a real MongoDB server."""
+    import mongomock
+
+    try:
+        db_holder.client.close()
+    except Exception:
+        pass
+    db_holder.client = mongomock.MongoClient()
+    db_holder.db = db_holder.client['audionovel']
+    db_holder.available = True
+    print(
+        "Using in-memory MongoDB (mongomock). Data is not persisted. "
+        "Set MONGODB_URI to use Atlas or a local mongod instance."
+    )
 
 class FileModel:
     """Model for managing uploaded files in MongoDB"""
@@ -236,8 +254,12 @@ library_model = None
 def init_db(connection_string: str = None):
     """Initialize the database and models"""
     global db_instance, file_model, processing_model, user_model, library_model
-    
+
+    force_mock = os.getenv("USE_MONGOMOCK", "").lower() in ("1", "true", "yes")
     db_instance = MongoDB(connection_string)
+    if force_mock or not db_instance.available:
+        _switch_to_mongomock(db_instance)
+
     file_model = FileModel(db_instance.db)
     processing_model = ProcessingResultModel(db_instance.db)
     

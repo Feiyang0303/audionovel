@@ -1,16 +1,42 @@
-import { useState, useEffect } from 'react'
-import { getProfile, logout, getCurrentUser } from '../services/auth'
-import { getUserLibrary, removeFromLibrary, toggleFavorite, formatDate, formatFileSize, getFileTypeIcon } from '../services/library'
+import { useState, useEffect, useCallback } from 'react'
+import { getProfile, getCurrentUser } from '../services/auth'
+import { useAuth } from '../contexts/AuthContext'
+import { getUserLibrary, removeFromLibrary, setLibraryItemFavorite, formatDate, formatFileSize, getFileTypeIcon } from '../services/library'
 import type { User } from '../services/auth'
-import type { LibraryItem } from '../services/library'
+import type { LibraryItem, LibraryStats } from '../services/library'
 import { useNavigate } from 'react-router-dom'
 
 export function Profile() {
   const [user, setUser] = useState<User | null>(null)
+  const [libraryStats, setLibraryStats] = useState<LibraryStats | null>(null)
   const [library, setLibrary] = useState<LibraryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const navigate = useNavigate()
+  const { logout, syncSessionUser } = useAuth()
+
+  const loadProfile = useCallback(async () => {
+    try {
+      setLoading(true)
+      const [profileData, libraryData] = await Promise.all([
+        getProfile(),
+        getUserLibrary()
+      ])
+
+      const serverUser = profileData.user as User
+      setUser(serverUser)
+      syncSessionUser(serverUser)
+      setLibraryStats(profileData.library_stats as LibraryStats)
+      setLibrary(libraryData.items)
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to load profile')
+      if (err.response?.status === 401) {
+        navigate('/login')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [navigate, syncSessionUser])
 
   useEffect(() => {
     const currentUser = getCurrentUser()
@@ -20,32 +46,12 @@ export function Profile() {
     }
 
     setUser(currentUser)
-    loadProfile()
-  }, [navigate])
-
-  const loadProfile = async () => {
-    try {
-      setLoading(true)
-      const [profileData, libraryData] = await Promise.all([
-        getProfile(),
-        getUserLibrary()
-      ])
-      
-      setUser(profileData.user)
-      setLibrary(libraryData.library)
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to load profile')
-      if (err.response?.status === 401) {
-        navigate('/login')
-      }
-    } finally {
-      setLoading(false)
-    }
-  }
+    void loadProfile()
+  }, [navigate, loadProfile])
 
   const handleLogout = () => {
     logout()
-    navigate('/login')
+    navigate('/login', { replace: true })
   }
 
   const handleRemoveFromLibrary = async (itemId: string) => {
@@ -58,12 +64,12 @@ export function Profile() {
   }
 
   const handleToggleFavorite = async (itemId: string) => {
+    const item = library.find((i) => i._id === itemId)
+    if (!item) return
     try {
-      const result = await toggleFavorite(itemId)
-      setLibrary(library.map(item => 
-        item._id === itemId 
-          ? { ...item, is_favorite: result.is_favorite }
-          : item
+      const result = await setLibraryItemFavorite(itemId, !item.is_favorite)
+      setLibrary(library.map((i) =>
+        i._id === itemId ? { ...i, ...result.item, is_favorite: result.item.is_favorite } : i
       ))
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to update favorite')
@@ -95,20 +101,25 @@ export function Profile() {
     )
   }
 
+  const displayName = (user.name || '').trim() || user.username || 'Your account'
+  const avatarSrc =
+    user.profile_pic ||
+    `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=6366f1&color=fff`
+
   return (
     <div className="max-w-3xl mx-auto pt-32 px-4 sm:px-6 lg:px-8">
       <div className="bg-white shadow sm:rounded-lg">
-        {/* Profile Section */}
+        {/* Profile Section — same fields as login/register API user object */}
         <div className="px-6 py-8 sm:p-8 border-b border-gray-200">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-6">
               <img
-                src={user.profile_pic}
-                alt={user.name}
+                src={avatarSrc}
+                alt={displayName}
                 className="h-24 w-24 rounded-full border-2 border-indigo-100"
               />
               <div>
-                <h2 className="text-2xl font-bold text-gray-900">{user.name}</h2>
+                <h2 className="text-2xl font-bold text-gray-900">{displayName}</h2>
                 <p className="text-lg text-gray-600">{user.email}</p>
                 <p className="text-sm text-gray-500">@{user.username}</p>
               </div>
@@ -120,6 +131,16 @@ export function Profile() {
               Logout
             </button>
           </div>
+          {libraryStats && (
+            <div className="mt-6 flex flex-wrap gap-4 text-sm text-gray-600">
+              <span className="rounded-md bg-indigo-50 px-3 py-1 text-indigo-800">
+                {libraryStats.total_items} item{libraryStats.total_items !== 1 ? 's' : ''} in library
+              </span>
+              <span>PDF: {libraryStats.pdf_items}</span>
+              <span>Text: {libraryStats.txt_items}</span>
+              <span>Added last 30 days: {libraryStats.recent_items}</span>
+            </div>
+          )}
         </div>
 
         {/* Error Display */}

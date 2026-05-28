@@ -43,7 +43,7 @@ def get_client():
         "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     }
 
-client = get_client()
+
 class TextProcessor:
     def __init__(self):
         # Define the expert roles and their prompts
@@ -277,8 +277,9 @@ class TextProcessor:
         """
         Make an API request to Qwen.
         """
-        api_key = client["api_key"]
-        base_url = client["base_url"]
+        qwen = get_client()
+        api_key = qwen["api_key"]
+        base_url = qwen["base_url"]
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
